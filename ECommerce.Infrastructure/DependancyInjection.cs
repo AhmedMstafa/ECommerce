@@ -1,6 +1,10 @@
-﻿using ECommerce.Domain.Data.DbContexts;
+using ECommerce.Domain.Data.DbContexts;
 using ECommerce.Infrastructure.Interceptors;
+using ECommerce.Infrastructure.Queries;
 using ECommerce.Infrastructure.Seeding;
+using ECommerce.UseCases.Brands;
+using ECommerce.UseCases.Products;
+using ECommerce.UseCases.Types;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,7 +13,7 @@ namespace ECommerce.Infrastructure
 {
     public static class DependancyInjection
     {
-        public static IServiceCollection AddInfrastructure(this IServiceCollection services,IConfiguration configuration)
+        public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
         {
             services.AddSingleton<AuditableEntityInterceptor>();
 
@@ -26,6 +30,10 @@ namespace ECommerce.Infrastructure
             services.AddScoped<IDataSeeder, ProductBrandSeeder>();
 
             services.AddScoped<DatabaseSeeder>();
+
+            services.AddScoped<IProductQueryService, ProductQueryService>();
+            services.AddScoped<IBrandQueryService, BrandQueryService>();
+            services.AddScoped<ITypeQueryService, TypeQueryService>();
 
             return services;
         }

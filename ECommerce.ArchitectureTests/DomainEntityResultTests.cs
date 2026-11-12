@@ -204,4 +204,48 @@ public class DomainEntityResultTests
         secondDelete.IsFailure.Should().BeTrue();
         secondDelete.Error!.Type.Should().Be(ErrorType.Conflict);
     }
+
+    [Fact]
+    public void ResultT_Match_OnSuccess_ShouldCallOnSuccess()
+    {
+        // Arrange
+        var result = Result.Success("SuccessData");
+
+        // Act
+        var output = result.Match(
+            val => $"Processed: {val}",
+            err => $"Error: {err.Message}");
+
+        // Assert
+        output.Should().Be("Processed: SuccessData");
+    }
+
+    [Fact]
+    public void ResultT_Match_OnFailure_ShouldCallOnFailure()
+    {
+        // Arrange
+        var error = Error.Validation("Code", "Validation failed");
+        var result = Result.Failure<string>(error);
+
+        // Act
+        var output = result.Match(
+            val => $"Processed: {val}",
+            err => $"Error: {err.Message}");
+
+        // Assert
+        output.Should().Be("Error: Validation failed");
+    }
+
+    [Fact]
+    public void ResultT_Value_OnFailure_ShouldThrowInvalidOperationException()
+    {
+        // Arrange
+        var error = Error.NotFound("Code", "Not found");
+        var result = Result.Failure<string>(error);
+
+        // Act & Assert
+        Action act = () => { var _ = result.Value; };
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("The value of a failure result cannot be accessed.");
+    }
 }

@@ -25,6 +25,27 @@ namespace ECommerce.Domain.Common
         public static Result<TValue> Failure<TValue>(Error error) => new(default, false, error);
 
         public static implicit operator Result(Error error) => Failure(error);
+
+        public TResult Match<TResult>(
+            Func<TResult> onSuccess,
+            Func<Error, TResult> onFailure)
+        {
+            return IsSuccess ? onSuccess() : onFailure(Error!);
+        }
+
+        public void Match(
+            Action onSuccess,
+            Action<Error> onFailure)
+        {
+            if (IsSuccess)
+            {
+                onSuccess();
+            }
+            else
+            {
+                onFailure(Error!);
+            }
+        }
     }
 
     public class Result<TValue> : Result
@@ -46,5 +67,26 @@ namespace ECommerce.Domain.Common
             value is not null ? Success(value) : Failure<TValue>(Error.NotFound("Result.NullValue", "The specified value is null."));
 
         public static implicit operator Result<TValue>(Error error) => Failure<TValue>(error);
+
+        public TResult Match<TResult>(
+            Func<TValue, TResult> onSuccess,
+            Func<Error, TResult> onFailure)
+        {
+            return IsSuccess ? onSuccess(Value) : onFailure(Error!);
+        }
+
+        public void Match(
+            Action<TValue> onSuccess,
+            Action<Error> onFailure)
+        {
+            if (IsSuccess)
+            {
+                onSuccess(Value);
+            }
+            else
+            {
+                onFailure(Error!);
+            }
+        }
     }
 }

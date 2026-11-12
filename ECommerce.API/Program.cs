@@ -1,4 +1,5 @@
 using ECommerce.API;
+using ECommerce.API.EndPoints;
 using ECommerce.Domain.Data.DbContexts;
 using ECommerce.Infrastructure;
 using ECommerce.Infrastructure.Seeding;
@@ -21,8 +22,13 @@ app.UseExceptionHandler();
 //{
 //    throw new Exception("Something went wrong internally!");
 //});
-
 if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+    if (app.Environment.IsDevelopment())
 {
 
 var scope = app.Services.CreateAsyncScope();
@@ -32,5 +38,8 @@ var dbSeed = scope.ServiceProvider.GetRequiredService<DatabaseSeeder>();
     await dbContext.Database.MigrateAsync();
     await dbSeed.SeedAll();
 }
+
+app.MapControllers();
+//app.MapProductEndpoints();
 
 app.Run();

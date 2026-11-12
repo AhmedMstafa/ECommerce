@@ -14,7 +14,7 @@ namespace ECommerce.Infrastructure.Repositories
         {
             var type = typeof(T);
 
-            if (_repos.TryGetValue(type, out var repo))
+            if (_repos.TryGetValue(type, out var repo)) 
                 return (IRepository<T>)repo;
 
 
