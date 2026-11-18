@@ -1,12 +1,17 @@
-using ECommerce.UseCases.Types;
+using ECommerce.Domain.Entities;
+using ECommerce.Domain.Repositories;
 using ECommerce.UseCases.Types.Dtos;
+using ECommerce.UseCases.Types.Specifications;
+using Mapster;
 
 namespace ECommerce.UseCases.Queries;
 
-public class GetAllTypesQuery(ITypeQueryService typeQueryService)
+public class GetAllTypesQuery(IReadRepository<ProductType> typeRepository)
 {
     public async Task<IReadOnlyList<GetAllTypesResponse>> ExecuteAsync(CancellationToken cancellationToken = default)
     {
-        return await typeQueryService.GetAllTypesAsync(cancellationToken);
+        var spec = new GetAllTypesSpecification();
+        var types = await typeRepository.GetAllWithSpecAsync(spec, cancellationToken);
+        return types.Adapt<IReadOnlyList<GetAllTypesResponse>>();
     }
 }

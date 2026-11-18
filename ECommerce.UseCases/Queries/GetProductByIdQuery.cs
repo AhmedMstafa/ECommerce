@@ -1,22 +1,26 @@
 using ECommerce.Domain.Common;
-using ECommerce.UseCases.Products;
+using ECommerce.Domain.Entities;
+using ECommerce.Domain.Repositories;
 using ECommerce.UseCases.Products.Dtos;
+using ECommerce.UseCases.Products.Specifications;
+using Mapster;
 
 namespace ECommerce.UseCases.Queries;
 
-public class GetProductByIdQuery(IProductQueryService productQueryService)
+public class GetProductByIdQuery(IReadRepository<Product> productRepository)
 {
     public async Task<Result<GetByIdProductResponse>> ExecuteAsync(
         Guid id, 
         CancellationToken cancellationToken = default)
     {
-        var product = await productQueryService.GetProductByIdAsync(id, cancellationToken);
+        var spec = new ProductByIdWithBrandAndTypeSpecification(id);
+        var product = await productRepository.GetEntityWithSpecAsync(spec, cancellationToken);
 
         if (product is null)
         {
             return ProductErrors.NotFound(id);
         }
 
-        return product;
+        return product.Adapt<GetByIdProductResponse>();
     }
 }

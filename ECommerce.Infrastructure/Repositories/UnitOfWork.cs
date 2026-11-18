@@ -7,9 +7,8 @@ namespace ECommerce.Infrastructure.Repositories
 {
     public class UnitOfWork(StoreDbContext dbContext) : IUnitOfWork
     {
-        // type(Product) => IRepo<Product>
-
         private readonly ConcurrentDictionary<Type, object> _repos = new();
+
         public IRepository<T> Repository<T>() where T : BaseEntity
         {
             var type = typeof(T);
@@ -17,16 +16,20 @@ namespace ECommerce.Infrastructure.Repositories
             if (_repos.TryGetValue(type, out var repo)) 
                 return (IRepository<T>)repo;
 
-
             var newRepo = new Repository<T>(dbContext);
             _repos.TryAdd(type, newRepo);
 
             return newRepo;
         }
 
-        public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        public IReadRepository<T> ReadRepository<T>() where T : BaseEntity
         {
-            throw new NotImplementedException();
+            return Repository<T>();
+        }
+
+        public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            return await dbContext.SaveChangesAsync(cancellationToken);
         }
     }
 }

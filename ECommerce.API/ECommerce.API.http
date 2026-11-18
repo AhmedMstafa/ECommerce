@@ -1,4 +1,5 @@
 @host = http://localhost:5246/api
+@swagger = http://localhost:5246/swagger/index.html
 @productId = df9e7190-3acb-47ab-8b49-00c0bfcbc29d
 GET {{host}}/products/
 Accept: application/json

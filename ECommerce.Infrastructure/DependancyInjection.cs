@@ -1,6 +1,8 @@
 using ECommerce.Domain.Data.DbContexts;
+using ECommerce.Domain.Repositories;
 using ECommerce.Infrastructure.Interceptors;
 using ECommerce.Infrastructure.Queries;
+using ECommerce.Infrastructure.Repositories;
 using ECommerce.Infrastructure.Seeding;
 using ECommerce.UseCases.Brands;
 using ECommerce.UseCases.Products;
@@ -25,6 +27,10 @@ namespace ECommerce.Infrastructure
                 .EnableSensitiveDataLogging()
                 .AddInterceptors(serviceProvider.GetRequiredService<AuditableEntityInterceptor>());
             });
+
+            services.AddScoped(typeof(IReadRepository<>), typeof(Repository<>));
+            services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+            services.AddScoped<IUnitOfWork, UnitOfWork>();
 
             services.AddScoped<IDataSeeder, ProductTypeSeeder>();
             services.AddScoped<IDataSeeder, ProductBrandSeeder>();

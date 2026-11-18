@@ -10,6 +10,7 @@ public class ApiControllerBase : ControllerBase
 {
     protected ActionResult<ApiResponse<T>> FromResult<T>(Result<T> result)
     {
+
         return result.Match<ActionResult<ApiResponse<T>>>(
             value => Ok(ApiResponse<T>.SuccessResponse(value)),
             error => error.Type switch
