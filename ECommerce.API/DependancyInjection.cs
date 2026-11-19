@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Reflection;
 using System.Threading.RateLimiting;
 using Asp.Versioning;
@@ -38,7 +38,8 @@ public static class DependancyInjection
         services.AddApiVersioning(options =>
         {
             options.DefaultApiVersion = new ApiVersion(1, 0);
-            options.AssumeDefaultVersionWhenUnspecified = true;
+            // Every controller route carries an explicit version segment.
+            options.AssumeDefaultVersionWhenUnspecified = false;
             options.ReportApiVersions = true;
             options.ApiVersionReader = new UrlSegmentApiVersionReader();
         })

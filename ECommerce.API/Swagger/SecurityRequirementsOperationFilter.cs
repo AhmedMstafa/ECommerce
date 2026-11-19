@@ -27,7 +27,7 @@ public sealed class SecurityRequirementsOperationFilter : IOperationFilter
 
         // Controller APIs are protected by the global fallback policy unless
         // explicitly marked [AllowAnonymous].
-        if (!isProtected)
+        if (!isProtected || context.Document is null)
         {
             return;
         }
@@ -40,6 +40,7 @@ public sealed class SecurityRequirementsOperationFilter : IOperationFilter
             }
         ];
 
+        operation.Responses ??= new OpenApiResponses();
         operation.Responses["401"] = new OpenApiResponse { Description = "Authentication is required." };
         operation.Responses["403"] = new OpenApiResponse { Description = "The authenticated user is not authorized." };
     }
