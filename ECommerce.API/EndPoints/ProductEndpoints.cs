@@ -1,21 +1,20 @@
-﻿using ECommerce.UseCases.Queries;
+﻿using ECommerce.UseCases.Products.Queries;
+using MediatR;
 
-namespace ECommerce.API.EndPoints
+namespace ECommerce.API.EndPoints;
+
+public static class ProductEndpoints
 {
-    public static class ProductEndpoints
+    public static IEndpointRouteBuilder MapProductEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        public static IEndpointRouteBuilder MapProductEndpoints(this IEndpointRouteBuilder endpoints)
+        var group = endpoints.MapGroup("/api/products").WithTags("Products");
+
+        group.MapGet("/", async (ISender sender, CancellationToken cancellationToken) =>
         {
-            var group = endpoints.MapGroup("/api/products").WithTags("Products");
+            var products = await sender.Send(new GetAllProductsQuery(), cancellationToken);
+            return Results.Ok(products);
+        });
 
-            group.MapGet("/", async (GetAllProductsQuery query, CancellationToken cancellationToken) =>
-            {
-                var products = await query.ExecuteAsync(cancellationToken);
-                return Results.Ok(products);
-            });
-
-           
-            return endpoints;
-        }
+        return endpoints;
     }
 }

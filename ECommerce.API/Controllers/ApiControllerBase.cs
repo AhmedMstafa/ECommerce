@@ -1,3 +1,4 @@
+using Asp.Versioning;
 using ECommerce.API.Models;
 using ECommerce.Domain.Common;
 using Microsoft.AspNetCore.Mvc;
@@ -5,12 +6,12 @@ using Microsoft.AspNetCore.Mvc;
 namespace ECommerce.API.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[ApiVersion("1.0")]
+[Route("api/v{version:apiVersion}/[controller]")]
 public class ApiControllerBase : ControllerBase
 {
     protected ActionResult<ApiResponse<T>> FromResult<T>(Result<T> result)
     {
-
         return result.Match<ActionResult<ApiResponse<T>>>(
             value => Ok(ApiResponse<T>.SuccessResponse(value)),
             error => error.Type switch

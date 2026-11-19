@@ -1,6 +1,6 @@
-﻿using ECommerce.Domain.Data.DbContexts;
-using ECommerce.Domain.Entityies;
+﻿using ECommerce.Domain.Entities;
 using ECommerce.Domain.Repositories;
+using ECommerce.Infrastructure.Persistence;
 using System.Collections.Concurrent;
 
 namespace ECommerce.Infrastructure.Repositories

@@ -1,5 +1,4 @@
 using ECommerce.Domain.Common;
-using ECommerce.Domain.Entityies;
 
 namespace ECommerce.Domain.Entities
 {

@@ -1,17 +1,22 @@
+using Asp.Versioning;
 using ECommerce.UseCases.Brands.Dtos;
-using ECommerce.UseCases.Queries;
+using ECommerce.UseCases.Brands.Queries;
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
-namespace ECommerce.API.Controllers
+namespace ECommerce.API.Controllers;
+
+[ApiVersion("1.0")]
+[EnableRateLimiting("fixed")]
+public class BrandsController(ISender sender) : ApiControllerBase
 {
-    public class BrandsController(GetAllBrandsQuery getAllBrandsQuery) : ApiControllerBase
+    [HttpGet]
+    [ProducesResponseType(typeof(IReadOnlyList<GetAllBrandsResponse>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<GetAllBrandsResponse>>> GetAll(CancellationToken cancellationToken = default)
     {
-        [HttpGet]
-        public async Task<ActionResult<IReadOnlyList<GetAllBrandsResponse>>> GetAll(CancellationToken cancellationToken = default)
-        {
-            var result = await getAllBrandsQuery.ExecuteAsync(cancellationToken);
+        var result = await sender.Send(new GetAllBrandsQuery(), cancellationToken);
 
-            return Ok(result);
-        }
+        return Ok(result);
     }
 }

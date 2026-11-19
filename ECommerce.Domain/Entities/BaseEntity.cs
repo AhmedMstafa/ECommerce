@@ -1,6 +1,6 @@
 using ECommerce.Domain.Common;
 
-namespace ECommerce.Domain.Entityies
+namespace ECommerce.Domain.Entities
 {
     public class BaseEntity
     {

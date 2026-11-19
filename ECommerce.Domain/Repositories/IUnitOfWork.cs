@@ -1,4 +1,4 @@
-﻿using ECommerce.Domain.Entityies;
+﻿using ECommerce.Domain.Entities;
 
 namespace ECommerce.Domain.Repositories
 {

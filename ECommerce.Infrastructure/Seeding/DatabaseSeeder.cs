@@ -1,4 +1,4 @@
-﻿using ECommerce.Domain.Data.DbContexts;
+﻿using ECommerce.Infrastructure.Persistence;
 
 namespace ECommerce.Infrastructure.Seeding
 {

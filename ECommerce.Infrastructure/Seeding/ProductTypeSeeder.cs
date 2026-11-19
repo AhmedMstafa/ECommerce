@@ -1,4 +1,4 @@
-using ECommerce.Domain.Data.DbContexts;
+using ECommerce.Infrastructure.Persistence;
 using ECommerce.Domain.Entities;
 using ECommerce.Infrastructure.Seeding.Data;
 using ECommerce.Infrastructure.Seeding.Data.Models;
