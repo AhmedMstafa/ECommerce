@@ -1,16 +1,20 @@
-﻿using System.Reflection;
+﻿using System.Globalization;
+using System.Reflection;
 using System.Threading.RateLimiting;
 using Asp.Versioning;
+using ECommerce.API.Configuration;
+using ECommerce.API.Health;
 using ECommerce.API.Middlewares;
 using ECommerce.API.Swagger;
 using ECommerce.Infrastructure.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.OpenApi;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
+using Microsoft.OpenApi;
 using Swashbuckle.AspNetCore.SwaggerGen;
 
 namespace ECommerce.API;
@@ -22,6 +26,7 @@ public static class DependancyInjection
         IConfiguration configuration)
     {
         services.AddControllers();
+        services.AddEndpointsApiExplorer();
         services.AddProblemDetails();
         services.AddExceptionHandler<GlobalExceptionMiddleware>();
         services.AddAuthorization(options =>
@@ -70,37 +75,44 @@ public static class DependancyInjection
             {
                 [new OpenApiSecuritySchemeReference(JwtBearerDefaults.AuthenticationScheme, document)] = []
             });
+
+            options.OperationFilter<SecurityRequirementsOperationFilter>();
         });
 
         // 3. Rate Limiting
+        services.Configure<RateLimitingSettings>(configuration.GetSection("RateLimiting"));
+        var rateLimiting = configuration.GetSection("RateLimiting").Get<RateLimitingSettings>() ?? new();
+
         services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-            options.AddFixedWindowLimiter("fixed", policy =>
-            {
-                policy.PermitLimit = 100;
-                policy.Window = TimeSpan.FromMinutes(1);
-                policy.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-                policy.QueueLimit = 10;
-            });
+            options.AddPolicy("fixed", context => RateLimitPartition.GetFixedWindowLimiter(
+                GetRateLimitPartitionKey(context),
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = Math.Max(1, rateLimiting.Fixed.PermitLimit),
+                    Window = TimeSpan.FromSeconds(Math.Max(1, rateLimiting.Fixed.WindowSeconds)),
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                    QueueLimit = Math.Max(0, rateLimiting.Fixed.QueueLimit)
+                }));
 
-            options.AddFixedWindowLimiter("auth-policy", policy =>
-            {
-                policy.PermitLimit = 5;
-                policy.Window = TimeSpan.FromMinutes(1);
-                policy.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-                policy.QueueLimit = 0;
-            });
+            options.AddPolicy("auth-policy", context => RateLimitPartition.GetFixedWindowLimiter(
+                GetRateLimitPartitionKey(context),
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = Math.Max(1, rateLimiting.Auth.PermitLimit),
+                    Window = TimeSpan.FromSeconds(Math.Max(1, rateLimiting.Auth.WindowSeconds)),
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                    QueueLimit = Math.Max(0, rateLimiting.Auth.QueueLimit)
+                }));
 
             options.OnRejected = async (context, token) =>
             {
-                context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-                context.HttpContext.Response.ContentType = "application/problem+json";
-
                 if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
                 {
-                    context.HttpContext.Response.Headers.RetryAfter = ((int)retryAfter.TotalSeconds).ToString();
+                    context.HttpContext.Response.Headers.RetryAfter =
+                        Math.Ceiling(retryAfter.TotalSeconds).ToString(CultureInfo.InvariantCulture);
                 }
 
                 var problemDetails = new ProblemDetails
@@ -121,14 +133,30 @@ public static class DependancyInjection
         // 4. Health Checks
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         var healthChecks = services.AddHealthChecks();
-        if (!string.IsNullOrEmpty(connectionString))
+
+        // Always register a self check so readiness cannot report healthy with
+        // an empty registration list when configuration is missing.
+        healthChecks.AddCheck(
+            "self",
+            () => HealthCheckResult.Healthy("API process is running."),
+            tags: ["self", "ready"]);
+
+        if (!string.IsNullOrWhiteSpace(connectionString))
         {
             healthChecks.AddSqlServer(
                 connectionString: connectionString,
                 name: "sqlserver",
-                tags: ["db", "ready"]);
+                tags: ["db", "ready"],
+                timeout: TimeSpan.FromSeconds(5));
         }
 
         return services;
+    }
+
+    private static string GetRateLimitPartitionKey(HttpContext context)
+    {
+        return context.User.Identity?.Name ??
+               context.Connection.RemoteIpAddress?.ToString() ??
+               "anonymous";
     }
 }

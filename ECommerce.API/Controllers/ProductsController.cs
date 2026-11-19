@@ -16,6 +16,7 @@ namespace ECommerce.API.Controllers;
 /// </summary>
 [ApiVersion("1.0")]
 [EnableRateLimiting("fixed")]
+[ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
 public class ProductsController(ISender sender) : ApiControllerBase
 {
     /// <summary>

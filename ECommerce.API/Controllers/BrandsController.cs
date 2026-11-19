@@ -9,6 +9,7 @@ namespace ECommerce.API.Controllers;
 
 [ApiVersion("1.0")]
 [EnableRateLimiting("fixed")]
+[ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
 public class BrandsController(ISender sender) : ApiControllerBase
 {
     [HttpGet]

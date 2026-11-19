@@ -1,6 +1,7 @@
 using Asp.Versioning.ApiExplorer;
 using ECommerce.API;
 using ECommerce.API.Hangfire;
+using ECommerce.API.Health;
 using ECommerce.Infrastructure;
 using ECommerce.Infrastructure.BackgroundJobs;
 using ECommerce.Infrastructure.Persistence;
@@ -10,6 +11,7 @@ using Hangfire;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
+using Serilog.Events;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,8 +19,7 @@ builder.Host.UseSerilog((context, services, configuration) =>
 {
     configuration
         .ReadFrom.Configuration(context.Configuration)
-        .ReadFrom.Services(services)
-        .Enrich.FromLogContext();
+        .ReadFrom.Services(services);
 });
 
 builder.Services.AddPresentation(builder.Configuration);
@@ -27,18 +28,43 @@ builder.Services.AddApplication();
 
 var app = builder.Build();
 
-app.UseSerilogRequestLogging();
-app.UseExceptionHandler();
+app.UseSerilogRequestLogging(options =>
+{
+    options.GetLevel = (httpContext, _, exception) =>
+    {
+        if (exception is not null)
+        {
+            return LogEventLevel.Error;
+        }
 
+        return httpContext.Request.Path.StartsWithSegments("/health")
+            ? LogEventLevel.Verbose
+            : LogEventLevel.Information;
+    };
+
+    options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+    {
+        diagnosticContext.Set("CorrelationId", httpContext.TraceIdentifier);
+        diagnosticContext.Set("UserId", httpContext.User.Identity?.Name ?? "anonymous");
+        diagnosticContext.Set("ClientIp", httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+    };
+});
+
+app.UseExceptionHandler();
+app.UseStatusCodePages();
+app.UseRouting();
 app.UseRateLimiter();
 
-if (app.Environment.IsDevelopment())
+var swaggerEnabled = app.Configuration.GetValue<bool>("Swagger:Enabled", app.Environment.IsDevelopment());
+if (swaggerEnabled)
 {
     var apiVersionDescriptions = app.DescribeApiVersions();
 
     app.UseSwagger();
     app.UseSwaggerUI(options =>
     {
+        options.ConfigObject.PersistAuthorization = true;
+
         foreach (var description in apiVersionDescriptions.Reverse())
         {
             options.SwaggerEndpoint(
@@ -58,32 +84,49 @@ if (app.Environment.IsDevelopment())
     await dbSeed.SeedAll();
 }
 
-// Health check endpoints: Liveness and Readiness
+var healthCheckOptions = new HealthCheckOptions
+{
+    ResponseWriter = HealthCheckResponseWriter.WriteAsync,
+    AllowCachingResponses = false
+};
+
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {
-    Predicate = _ => false
+    Predicate = _ => false,
+    ResponseWriter = healthCheckOptions.ResponseWriter,
+    AllowCachingResponses = false
 });
 
 app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
-    Predicate = check => check.Tags.Contains("ready")
+    Predicate = check => check.Tags.Contains("ready"),
+    ResponseWriter = healthCheckOptions.ResponseWriter,
+    AllowCachingResponses = false
 });
 
 app.UseAuthentication();
 app.UseAuthorization();
 
-// The dashboard must see the authenticated principal, so it is registered
-// after the authentication/authorization middlewares.
-app.UseHangfireDashboard("/hangfire", new DashboardOptions
+if (!app.Environment.IsEnvironment("Testing"))
 {
-    Authorization = [new HangfireDashboardAuthorizationFilter()]
-});
+    // The dashboard must see the authenticated principal, so it is registered
+    // after the authentication/authorization middlewares.
+    app.UseHangfireDashboard("/hangfire", new DashboardOptions
+    {
+        Authorization = [new HangfireDashboardAuthorizationFilter()]
+    });
 
-RecurringJob.AddOrUpdate<OutboxProcessorJob>(
-    "process-outbox-messages",
-    job => job.ProcessPendingMessagesAsync(CancellationToken.None),
-    "*/15 * * * * *");
+    RecurringJob.AddOrUpdate<OutboxProcessorJob>(
+        "process-outbox-messages",
+        job => job.ProcessPendingMessagesAsync(CancellationToken.None),
+        "*/15 * * * * *");
+}
 
 app.MapControllers();
 
 app.Run();
+
+/// <summary>
+/// Exposed for WebApplicationFactory-based integration tests.
+/// </summary>
+public partial class Program { }

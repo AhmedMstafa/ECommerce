@@ -22,6 +22,7 @@ namespace ECommerce.API.Controllers;
 /// </summary>
 [ApiVersion("1.0")]
 [EnableRateLimiting("auth-policy")]
+[ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
 public class AuthController(ISender sender) : ApiControllerBase
 {
     /// <summary>
