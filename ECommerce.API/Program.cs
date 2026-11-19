@@ -1,4 +1,5 @@
 using Asp.Versioning.ApiExplorer;
+using DotNetEnv;
 using ECommerce.API;
 using ECommerce.API.Hangfire;
 using ECommerce.API.Health;
@@ -12,6 +13,31 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 using Serilog.Events;
+
+// Load the repository-level .env before CreateBuilder reads configuration.
+// Existing process environment variables always win: CI and the integration
+// tests inject their own values. A missing .env file is not an error.
+static string? FindEnvFile()
+{
+    for (var directory = new DirectoryInfo(Directory.GetCurrentDirectory());
+         directory is not null;
+         directory = directory.Parent)
+    {
+        var candidate = Path.Combine(directory.FullName, ".env");
+        if (File.Exists(candidate))
+        {
+            return candidate;
+        }
+    }
+
+    return null;
+}
+
+var envFile = FindEnvFile();
+if (envFile is not null)
+{
+    Env.NoClobber().Load(envFile);
+}
 
 var builder = WebApplication.CreateBuilder(args);
 

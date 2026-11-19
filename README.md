@@ -24,30 +24,43 @@ Domain never references outer layers.
 
 ## Required local configuration
 
-Secrets are not committed. Use user-secrets for local development and
-environment variables in CI/production.
+Secrets live in a root `.env` file, which is gitignored. `Program.cs` loads it
+before building the configuration, using `DotNetEnv`. If the same variable
+already exists in the process environment, that value wins — this is how CI
+and the integration tests inject their own settings.
 
 ```powershell
-dotnet user-secrets set "Jwt:SecretKey" "<a-long-random-secret>" --project ECommerce.API
+Copy-Item .env.example .env
 ```
 
-Useful environment variables:
+Then edit `.env`:
 
-- `Jwt__SecretKey` — required for the API to start.
-- `ECOMMERCE_TEST_SQL_CONNECTION` — optional SQL Server `master` connection for
+- `Jwt__SecretKey` — **required**; generate a long random value (at least 32
+  bytes). The API refuses to start without it.
+- `ConnectionStrings__DefaultConnection` — **required**; a local SQL Server with
+  integrated authentication is the default. Use `User Id` / `Password` there if
+  your server requires SQL authentication.
+- `GoogleAuth__ClientId` — optional; only a Web Client ID is needed, no client
+  secret. Without it, Google endpoints return a clear "not configured" error.
+- `EmailSettings__*` and `ClientApp__BaseUrl` — optional; needed only for
+  password-reset emails. `ClientApp__BaseUrl` is used to build the reset link.
+- `SeedAdmin__Email` / `SeedAdmin__Password` — optional; applied only when
+  `ASPNETCORE_ENVIRONMENT=Development`.
+- `ECOMMERCE_TEST_SQL_CONNECTION` — optional; SQL Server `master` connection for
   integration tests.
-- `SeedAdmin__Email` / `SeedAdmin__Password` — optional administrator seeding
-  in Development.
-- `GoogleAuth__ClientId`, `EmailSettings__*` — supplied externally when those
-  integrations are used.
 
-The committed `ConnectionStrings:DefaultConnection` expects a local SQL Server
-with integrated authentication. Change it through configuration, not source.
+Variable names map to standard configuration keys by replacing `:` with `__`,
+for example `Jwt__SecretKey` → `Jwt:SecretKey`. The application code keeps using
+the original key names.
+
+The `.env` file is found by walking up from the current directory, so it works
+when running from the repository root, from `ECommerce.API`, and from test
+output folders. A missing `.env` file is not an error; injection via environment
+variables still works.
 
 ## Build and test
 
 ```powershell
-$env:Jwt__SecretKey='local-development-only-key-change-me-0123456789'
 dotnet build ECommerce.slnx
 dotnet test ECommerce.slnx --nologo -v q
 ```
@@ -67,12 +80,29 @@ additive migrations only:
 Create new migrations with:
 
 ```powershell
-$env:Jwt__SecretKey='<local-secret>'
 $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
 dotnet ef migrations add <Name> --project ECommerce.Infrastructure --startup-project ECommerce.API --output-dir Migrations
 ```
 
-Do not regenerate or edit the initial migration.
+The design-time host loads the same root `.env`, so no manual secret injection
+is needed. Do not regenerate or edit the initial migration.
+
+## Production configuration
+
+Do not deploy `.env`. Inject the same names as environment variables through
+your secret store (Kubernetes Secrets, Azure App Configuration, CI variables,
+etc.):
+
+| Configuration key | Environment variable |
+| --- | --- |
+| `Jwt:SecretKey` | `Jwt__SecretKey` |
+| `ConnectionStrings:DefaultConnection` | `ConnectionStrings__DefaultConnection` |
+| `GoogleAuth:ClientId` | `GoogleAuth__ClientId` |
+| `EmailSettings:Password` | `EmailSettings__Password` |
+| `ClientApp:BaseUrl` | `ClientApp__BaseUrl` |
+
+Missing `Jwt:SecretKey` or `ConnectionStrings:DefaultConnection` produces a
+clear startup error that names the key but never prints a value.
 
 ## Design notes
 

@@ -24,4 +24,22 @@ public class Phase0SecurityTests
         act.Should().Throw<InvalidOperationException>()
             .WithMessage("*Jwt:SecretKey*");
     }
+
+    [Fact]
+    public void AddInfrastructure_ShouldFailFast_WhenConnectionStringIsMissing()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Jwt:SecretKey"] = "unit-test-only-key-change-me-0123456789"
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+
+        var act = () => services.AddInfrastructure(configuration);
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*ConnectionStrings:DefaultConnection*");
+    }
 }

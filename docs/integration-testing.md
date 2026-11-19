@@ -35,6 +35,9 @@ equivalent `ConnectionStrings__DefaultConnection`-style environment variables
 **before** the host is created and restores the previous values on disposal.
 This ensures the API really uses the throwaway database.
 
+`Program.cs` loads the root `.env` with `DotNetEnv.NoClobber()`, so a `.env`
+present on the developer machine can never overwrite those test values.
+
 ## Isolated external effects
 
 - `IEmailService` is replaced with a recorder so no SMTP is contacted.
@@ -68,14 +71,12 @@ tests; xUnit runs that collection serially.
 With Docker available, no extra setup is needed:
 
 ```powershell
-$env:Jwt__SecretKey='local-development-only-key-change-me-0123456789'
 dotnet test ECommerce.slnx --nologo -v q
 ```
 
 With a local SQL Server and no Docker:
 
 ```powershell
-$env:Jwt__SecretKey='local-development-only-key-change-me-0123456789'
 dotnet test ECommerce.IntegrationTests/ECommerce.IntegrationTests.csproj --nologo
 ```
 

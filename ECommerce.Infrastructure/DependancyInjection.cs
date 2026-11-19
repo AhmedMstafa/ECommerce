@@ -94,7 +94,13 @@ public static class DependancyInjection
         if (string.IsNullOrWhiteSpace(secretKey))
         {
             throw new InvalidOperationException(
-                "Jwt:SecretKey is not configured. Use user-secrets in development and an environment variable in production.");
+                "Jwt:SecretKey is not configured. Set it in the root .env file for development or as an environment variable in production.");
+        }
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException(
+                "ConnectionStrings:DefaultConnection is not configured. Set it in the root .env file for development or as an environment variable in production.");
         }
 
         var issuer = jwtSection.GetValue<string>("Issuer") ?? "ECommerceApi";

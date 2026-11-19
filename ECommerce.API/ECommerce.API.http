@@ -1,7 +1,7 @@
 @baseUrl = http://localhost:5246
 @api = {{baseUrl}}/api/v1
 @email = test.user@example.com
-@password = Str0ng!Password
+@password = replace-with-a-strong-password
 @token = paste-JWT-from-login-here
 @adminToken = paste-admin-JWT-here
 @productId = replace-with-product-id
