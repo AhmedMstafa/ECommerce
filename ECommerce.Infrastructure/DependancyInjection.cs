@@ -32,6 +32,14 @@ public static class DependancyInjection
     {
         var connectionString = configuration.GetConnectionString("DefaultConnection");
 
+        var outboxSettings = configuration.GetSection(OutboxSettings.SectionName).Get<OutboxSettings>() ?? new();
+        outboxSettings.Validate();
+        services.Configure<OutboxSettings>(configuration.GetSection(OutboxSettings.SectionName));
+
+        var hangfireSettings = configuration.GetSection(HangfireSettings.SectionName).Get<HangfireSettings>() ?? new();
+        hangfireSettings.Validate();
+        services.Configure<HangfireSettings>(configuration.GetSection(HangfireSettings.SectionName));
+
         services.AddSingleton<AuditableEntityInterceptor>();
 
         // 1. EF Core StoreDbContext
@@ -69,6 +77,14 @@ public static class DependancyInjection
         services.Configure<JwtSettings>(configuration.GetSection("Jwt"));
         services.Configure<GoogleAuthSettings>(configuration.GetSection(GoogleAuthSettings.SectionName));
         services.AddSingleton<IJwtProvider, JwtProvider>();
+
+        // Google ID-token validation fetches signing certificates over HTTP.
+        // This is the only real outbound HTTP dependency, so resilience is
+        // scoped to that named client instead of a generic, unused one.
+        services.AddHttpClient(GoogleTokenValidator.ResilientHttpClientName)
+            .AddStandardResilienceHandler();
+        services.AddSingleton<Google.Apis.Http.IHttpClientFactory, GoogleResilientHttpClientFactory>();
+
         services.AddSingleton<IGoogleTokenValidator, GoogleTokenValidator>();
         services.AddScoped<IIdentityService, IdentityService>();
 
@@ -114,12 +130,12 @@ public static class DependancyInjection
         services.AddMemoryCache();
         services.AddSingleton<ICacheService, MemoryCacheService>();
 
-        // 6. Resilience
-        services.AddHttpClient("ExternalServices")
-            .AddStandardResilienceHandler();
+        // 6. Outbox processing infrastructure
+        services.AddSingleton<IOutboxClock, SystemOutboxClock>();
+        services.AddScoped<IOutboxMessageStore, EfCoreOutboxMessageStore>();
 
         // 7. Hangfire Background Processing
-        if (!string.IsNullOrEmpty(connectionString))
+        if (!string.IsNullOrWhiteSpace(connectionString))
         {
             services.AddHangfire(config =>
             {
@@ -128,9 +144,9 @@ public static class DependancyInjection
                     .UseRecommendedSerializerSettings()
                     .UseSqlServerStorage(connectionString, new SqlServerStorageOptions
                     {
-                        CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
-                        SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
-                        QueuePollInterval = TimeSpan.FromSeconds(15),
+                        CommandBatchMaxTimeout = TimeSpan.FromMinutes(hangfireSettings.CommandBatchMaxTimeoutMinutes),
+                        SlidingInvisibilityTimeout = TimeSpan.FromMinutes(hangfireSettings.SlidingInvisibilityTimeoutMinutes),
+                        QueuePollInterval = TimeSpan.FromSeconds(hangfireSettings.QueuePollIntervalSeconds),
                         UseRecommendedIsolationLevel = true,
                         DisableGlobalLocks = true
                     });
@@ -138,7 +154,9 @@ public static class DependancyInjection
 
             services.AddHangfireServer(options =>
             {
-                options.WorkerCount = Math.Max(2, Environment.ProcessorCount);
+                options.WorkerCount = hangfireSettings.WorkerCount;
+                options.Queues = ["outbox", "default"];
+                options.ServerTimeout = TimeSpan.FromSeconds(hangfireSettings.ServerTimeoutSeconds);
             });
 
             services.AddScoped<OutboxProcessorJob>();

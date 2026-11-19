@@ -3,14 +3,19 @@ using ECommerce.UseCases.Common.Auth;
 using Google.Apis.Auth;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using GoogleHttpClientFactory = Google.Apis.Http.IHttpClientFactory;
 
 namespace ECommerce.Infrastructure.Auth;
 
 public sealed class GoogleTokenValidator(
     IOptions<GoogleAuthSettings> options,
-    ILogger<GoogleTokenValidator> logger) : IGoogleTokenValidator
+    ILogger<GoogleTokenValidator> logger,
+    GoogleHttpClientFactory? httpClientFactory = null) : IGoogleTokenValidator
 {
+    public const string ResilientHttpClientName = "GoogleTokenValidation";
+
     private readonly GoogleAuthSettings _settings = options.Value;
+    private readonly GoogleHttpClientFactory? _httpClientFactory = httpClientFactory;
 
     public async Task<Result<GoogleIdentity>> ValidateAsync(string idToken, CancellationToken ct = default)
     {
@@ -29,6 +34,11 @@ public sealed class GoogleTokenValidator(
             {
                 Audience = [_settings.ClientId]
             };
+
+            if (_httpClientFactory is not null)
+            {
+                settings.HttpClientFactory = _httpClientFactory;
+            }
 
             var payload = await GoogleJsonWebSignature.ValidateAsync(idToken, settings);
 

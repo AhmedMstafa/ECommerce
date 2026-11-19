@@ -19,7 +19,8 @@ public class SmtpEmailService(
         string subject, 
         string body, 
         bool isHtml = true, 
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? messageId = null)
     {
         if (string.IsNullOrWhiteSpace(_settings.SmtpServer) ||
             string.IsNullOrWhiteSpace(_settings.SenderEmail))
@@ -37,6 +38,13 @@ public class SmtpEmailService(
             message.From.Add(new MailboxAddress(_settings.SenderName, _settings.SenderEmail));
             message.To.Add(MailboxAddress.Parse(to));
             message.Subject = subject;
+
+            if (!string.IsNullOrWhiteSpace(messageId))
+            {
+                // A deterministic Message-Id lets receiving systems suppress a
+                // duplicate delivery after an ambiguous outbox failure.
+                message.MessageId = BuildMessageId(messageId);
+            }
 
             var bodyBuilder = new BodyBuilder();
             if (isHtml)
@@ -74,7 +82,25 @@ public class SmtpEmailService(
         {
             // Do not log the recipient address: it is personal data.
             logger.LogError(ex, "Failed to send email with subject {Subject}", subject);
-            return Result.Failure(Error.Failure("Email.SendFailed", $"Failed to send email: {ex.Message}"));
+            return Result.Failure(Error.Failure("Email.SendFailed", "Failed to send email."));
         }
+    }
+
+    private static string BuildMessageId(string idempotencyKey)
+    {
+        var normalized = idempotencyKey.Trim().Trim('<', '>');
+        var localPart = new string(normalized
+            .Select(character => char.IsLetterOrDigit(character) || character is '.' or '-' or '_'
+                ? character
+                : '-')
+            .ToArray())
+            .Trim('.');
+
+        if (string.IsNullOrWhiteSpace(localPart))
+        {
+            localPart = Guid.NewGuid().ToString("N");
+        }
+
+        return $"<{localPart}@outbox.ecommerce.local>";
     }
 }

@@ -1,9 +1,11 @@
 using System.Text.Json;
+using ECommerce.Domain.Entities;
+using ECommerce.Domain.Common;
 using ECommerce.UseCases.Common.Email;
 
 namespace ECommerce.Infrastructure.BackgroundJobs;
 
-public class EmailOutboxPayload
+public sealed class EmailOutboxPayload
 {
     public string To { get; set; } = default!;
     public string Subject { get; set; } = default!;
@@ -11,22 +13,37 @@ public class EmailOutboxPayload
     public bool IsHtml { get; set; } = true;
 }
 
-public class EmailOutboxMessageHandler(IEmailService emailService) : IOutboxMessageHandler
+public sealed class EmailOutboxMessageHandler(IEmailService emailService) : IOutboxMessageHandler
 {
-    public async Task HandleAsync(string payload, CancellationToken cancellationToken)
+    public async Task HandleAsync(OutboxMessage message, CancellationToken cancellationToken)
     {
-        var emailPayload = JsonSerializer.Deserialize<EmailOutboxPayload>(payload);
-        if (emailPayload is null)
+        ArgumentNullException.ThrowIfNull(message);
+
+        EmailOutboxPayload? payload;
+        try
         {
-            throw new InvalidOperationException("Invalid email payload in Outbox Message.");
+            payload = JsonSerializer.Deserialize<EmailOutboxPayload>(message.Content);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException("Invalid JSON in email outbox message.", ex);
+        }
+
+        if (payload is null ||
+            string.IsNullOrWhiteSpace(payload.To) ||
+            string.IsNullOrWhiteSpace(payload.Subject) ||
+            string.IsNullOrWhiteSpace(payload.Body))
+        {
+            throw new InvalidOperationException("Email outbox message is missing required fields.");
         }
 
         var result = await emailService.SendEmailAsync(
-            emailPayload.To, 
-            emailPayload.Subject, 
-            emailPayload.Body, 
-            emailPayload.IsHtml, 
-            cancellationToken);
+            payload.To,
+            payload.Subject,
+            payload.Body,
+            payload.IsHtml,
+            cancellationToken,
+            message.IdempotencyKey);
 
         if (result.IsFailure)
         {

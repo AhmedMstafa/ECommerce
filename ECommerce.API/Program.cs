@@ -118,7 +118,7 @@ if (!app.Environment.IsEnvironment("Testing"))
 
     RecurringJob.AddOrUpdate<OutboxProcessorJob>(
         "process-outbox-messages",
-        job => job.ProcessPendingMessagesAsync(CancellationToken.None),
+        job => job.ProcessPendingMessagesAsync(null),
         "*/15 * * * * *");
 }
 

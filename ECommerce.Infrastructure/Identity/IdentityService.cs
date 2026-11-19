@@ -5,6 +5,7 @@ using ECommerce.Domain.Common;
 using ECommerce.Domain.Entities;
 using ECommerce.Infrastructure.Auth;
 using ECommerce.Infrastructure.BackgroundJobs;
+using ECommerce.Infrastructure.Email;
 using ECommerce.Infrastructure.Persistence;
 using ECommerce.UseCases.Common.Auth;
 using Microsoft.AspNetCore.Identity;
@@ -113,23 +114,23 @@ public class IdentityService(
         var resetLink = $"{clientBaseUrl.TrimEnd('/')}/reset-password" +
                         $"?email={HttpUtility.UrlEncode(user.Email)}&token={HttpUtility.UrlEncode(token)}";
 
-        var safeFirstName = WebUtility.HtmlEncode(user.FirstName ?? string.Empty);
         var emailPayload = new EmailOutboxPayload
         {
             To = user.Email!,
-            Subject = "Password Reset Request",
-            Body = $"""
-                    <h2>Password Reset Request</h2>
-                    <p>Hello {safeFirstName},</p>
-                    <p>We received a request to reset your password. Click the link below to set a new password:</p>
-                    <p><a href="{WebUtility.HtmlEncode(resetLink)}" style="padding: 10px 18px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px;">Reset Password</a></p>
-                    <p>If you did not request this, you can safely ignore this email.</p>
-                    <p>This link is time-limited and can only be used once.</p>
-                    """,
+            Subject = EmailTemplates.PasswordResetSubject,
+            Body = EmailTemplates.RenderPasswordReset(user.FirstName ?? string.Empty, resetLink),
             IsHtml = true
         };
 
-        var outboxResult = OutboxMessage.Create("Email", JsonSerializer.Serialize(emailPayload));
+        // Including the token makes each reset request a distinct email. If the
+        // same request is retried, the derived key stays identical so the
+        // outbox's unique index prevents a duplicate row.
+        var idempotencyKey = $"password-reset:{user.Id}:{token}";
+
+        var outboxResult = OutboxMessage.Create(
+            "Email",
+            JsonSerializer.Serialize(emailPayload),
+            idempotencyKey: idempotencyKey);
         if (outboxResult.IsFailure)
         {
             return Result.Failure(outboxResult.Error!);
