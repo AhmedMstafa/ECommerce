@@ -24,8 +24,8 @@ public class PerformanceBehavior<TRequest, TResponse>(ILogger<PerformanceBehavio
         if (elapsedMilliseconds > SlowThresholdMilliseconds)
         {
             var requestName = typeof(TRequest).Name;
-            logger.LogWarning("[LONG RUNNING] Request {RequestName} took {ElapsedMilliseconds}ms (threshold: {Threshold}ms) {@Request}",
-                requestName, elapsedMilliseconds, SlowThresholdMilliseconds, request);
+            logger.LogWarning("[LONG RUNNING] Request {RequestName} took {ElapsedMilliseconds}ms (threshold: {Threshold}ms)",
+                requestName, elapsedMilliseconds, SlowThresholdMilliseconds);
         }
 
         return response;

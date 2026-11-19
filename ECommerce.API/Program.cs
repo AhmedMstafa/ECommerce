@@ -58,17 +58,6 @@ if (app.Environment.IsDevelopment())
     await dbSeed.SeedAll();
 }
 
-// Hangfire Dashboard & Background Job Scheduling
-app.UseHangfireDashboard("/hangfire", new DashboardOptions
-{
-    Authorization = [new HangfireDashboardAuthorizationFilter()]
-});
-
-RecurringJob.AddOrUpdate<OutboxProcessorJob>(
-    "process-outbox-messages",
-    job => job.ProcessPendingMessagesAsync(CancellationToken.None),
-    "*/15 * * * * *");
-
 // Health check endpoints: Liveness and Readiness
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {
@@ -82,6 +71,18 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// The dashboard must see the authenticated principal, so it is registered
+// after the authentication/authorization middlewares.
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = [new HangfireDashboardAuthorizationFilter()]
+});
+
+RecurringJob.AddOrUpdate<OutboxProcessorJob>(
+    "process-outbox-messages",
+    job => job.ProcessPendingMessagesAsync(CancellationToken.None),
+    "*/15 * * * * *");
 
 app.MapControllers();
 

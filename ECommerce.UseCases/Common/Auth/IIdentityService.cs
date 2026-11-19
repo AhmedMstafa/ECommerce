@@ -29,4 +29,9 @@ public interface IIdentityService
     Task<Result<AuthResponse>> GoogleLoginAsync(
         string idToken, 
         CancellationToken ct = default);
+
+    Task<Result> LinkGoogleAccountAsync(
+        string idToken,
+        Guid authenticatedUserId,
+        CancellationToken ct = default);
 }

@@ -11,10 +11,6 @@ public class ProductBrandConfiguration : IEntityTypeConfiguration<ProductBrand>
         builder.Property(x => x.Name)
             .IsRequired()
             .HasMaxLength(100);
-
-        builder.HasMany(x => x.Products)
-            .WithOne(x => x.Brand)
-            .HasForeignKey(x => x.ProductBrandId)
-            .OnDelete(DeleteBehavior.NoAction);
+        // Product <-> Brand relationship is configured in ProductConfiguration.
     }
 }

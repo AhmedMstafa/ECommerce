@@ -5,6 +5,7 @@ using ECommerce.UseCases.Products.Dtos;
 using ECommerce.UseCases.Products.Queries;
 using ECommerce.UseCases.Products.Specifications;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 
@@ -59,14 +60,25 @@ public class ProductsController(ISender sender) : ApiControllerBase
     /// <param name="cancellationToken">A token to cancel the request.</param>
     /// <returns>The ID of the newly created product.</returns>
     [HttpPost]
+    [Authorize(Policy = "AdminOnly")]
     [ProducesResponseType(typeof(ApiResponse<Guid>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<ApiResponse<Guid>>> Create(
         [FromBody] CreateProductCommand command,
         CancellationToken cancellationToken = default)
     {
         var result = await sender.Send(command, cancellationToken);
 
-        return FromResult(result);
+        if (result.IsFailure)
+        {
+            return FromResult(result);
+        }
+
+        return CreatedAtAction(
+            nameof(GetById),
+            new { id = result.Value },
+            ApiResponse<Guid>.SuccessResponse(result.Value, StatusCodes.Status201Created));
     }
 }

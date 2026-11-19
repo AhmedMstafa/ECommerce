@@ -11,10 +11,6 @@ public class ProductTypeConfiguration : IEntityTypeConfiguration<ProductType>
         builder.Property(x => x.Name)
             .IsRequired()
             .HasMaxLength(100);
-
-        builder.HasMany(x => x.Products)
-            .WithOne(x => x.Type)
-            .HasForeignKey(x => x.ProductTypeId)
-            .OnDelete(DeleteBehavior.NoAction);
+        // Product <-> Type relationship is configured in ProductConfiguration.
     }
 }

@@ -51,11 +51,13 @@ public static class DependancyInjection
         // 2. ASP.NET Core Identity
         services.AddIdentity<AppUser, IdentityRole<Guid>>(options =>
         {
-            options.Password.RequireDigit = false;
-            options.Password.RequireLowercase = false;
-            options.Password.RequireUppercase = false;
-            options.Password.RequireNonAlphanumeric = false;
-            options.Password.RequiredLength = 6;
+            // Applies to new registrations and password changes only;
+            // existing password hashes are not affected.
+            options.Password.RequireDigit = true;
+            options.Password.RequireLowercase = true;
+            options.Password.RequireUppercase = true;
+            options.Password.RequireNonAlphanumeric = true;
+            options.Password.RequiredLength = 8;
             options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
             options.Lockout.MaxFailedAccessAttempts = 5;
             options.Lockout.AllowedForNewUsers = true;
@@ -65,7 +67,9 @@ public static class DependancyInjection
 
         // 3. JWT Authentication & Options
         services.Configure<JwtSettings>(configuration.GetSection("Jwt"));
+        services.Configure<GoogleAuthSettings>(configuration.GetSection(GoogleAuthSettings.SectionName));
         services.AddSingleton<IJwtProvider, JwtProvider>();
+        services.AddSingleton<IGoogleTokenValidator, GoogleTokenValidator>();
         services.AddScoped<IIdentityService, IdentityService>();
 
         var jwtSection = configuration.GetSection("Jwt");
@@ -145,6 +149,7 @@ public static class DependancyInjection
         services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
         services.AddScoped<IUnitOfWork, UnitOfWork>();
 
+        services.AddScoped<IDataSeeder, IdentitySeeder>();
         services.AddScoped<IDataSeeder, ProductTypeSeeder>();
         services.AddScoped<IDataSeeder, ProductBrandSeeder>();
         services.AddScoped<DatabaseSeeder>();

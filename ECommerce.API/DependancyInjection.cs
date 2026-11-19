@@ -3,7 +3,10 @@ using System.Threading.RateLimiting;
 using Asp.Versioning;
 using ECommerce.API.Middlewares;
 using ECommerce.API.Swagger;
+using ECommerce.Infrastructure.Identity;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.OpenApi;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,6 +24,10 @@ public static class DependancyInjection
         services.AddControllers();
         services.AddProblemDetails();
         services.AddExceptionHandler<GlobalExceptionMiddleware>();
+        services.AddAuthorization(options =>
+        {
+            options.AddPolicy("AdminOnly", policy => policy.RequireRole(AppRoles.Admin));
+        });
 
         // 1. API Versioning
         services.AddApiVersioning(options =>
@@ -47,6 +54,22 @@ public static class DependancyInjection
             {
                 options.IncludeXmlComments(xmlPath);
             }
+
+            options.AddSecurityDefinition(JwtBearerDefaults.AuthenticationScheme, new OpenApiSecurityScheme
+            {
+                Name = "Authorization",
+                Type = SecuritySchemeType.Http,
+                Scheme = JwtBearerDefaults.AuthenticationScheme,
+                BearerFormat = "JWT",
+                In = ParameterLocation.Header,
+                Description = "Enter the JWT received from /api/v1/auth/login."
+            });
+
+            // OpenAPI.NET v2 requires the document-aware reference type.
+            options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+            {
+                [new OpenApiSecuritySchemeReference(JwtBearerDefaults.AuthenticationScheme, document)] = []
+            });
         });
 
         // 3. Rate Limiting
@@ -87,7 +110,11 @@ public static class DependancyInjection
                     Detail = "You have exceeded your request quota. Please wait before retrying."
                 };
 
-                await context.HttpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken: token);
+                await context.HttpContext.Response.WriteAsJsonAsync(
+                    problemDetails,
+                    options: null,
+                    contentType: "application/problem+json",
+                    cancellationToken: token);
             };
         });
 

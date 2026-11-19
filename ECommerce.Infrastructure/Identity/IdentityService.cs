@@ -1,15 +1,17 @@
+using System.Net;
 using System.Text.Json;
 using System.Web;
 using ECommerce.Domain.Common;
 using ECommerce.Domain.Entities;
+using ECommerce.Infrastructure.Auth;
 using ECommerce.Infrastructure.BackgroundJobs;
 using ECommerce.Infrastructure.Persistence;
 using ECommerce.UseCases.Common.Auth;
-using Google.Apis.Auth;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace ECommerce.Infrastructure.Identity;
 
@@ -17,15 +19,19 @@ public class IdentityService(
     UserManager<AppUser> userManager,
     SignInManager<AppUser> signInManager,
     IJwtProvider jwtProvider,
+    IGoogleTokenValidator googleTokenValidator,
     StoreDbContext dbContext,
     IConfiguration configuration,
+    IOptions<JwtSettings> jwtOptions,
     ILogger<IdentityService> logger) : IIdentityService
 {
+    private const string GoogleProvider = "Google";
+
     public async Task<Result<AuthResponse>> RegisterAsync(
-        string email, 
-        string password, 
-        string firstName, 
-        string lastName, 
+        string email,
+        string password,
+        string firstName,
+        string lastName,
         CancellationToken ct = default)
     {
         var existingUser = await userManager.FindByEmailAsync(email);
@@ -52,20 +58,12 @@ public class IdentityService(
             return Result.Failure<AuthResponse>(Error.Validation("User.RegistrationFailed", firstError));
         }
 
-        var roles = await userManager.GetRolesAsync(user);
-        var fullName = $"{user.FirstName} {user.LastName}".Trim();
-        var token = jwtProvider.GenerateToken(user.Id, user.Email!, fullName, roles);
-
-        return new AuthResponse(
-            token, 
-            user.Email!, 
-            fullName, 
-            DateTime.UtcNow.AddMinutes(120));
+        return await CreateAuthResponseAsync(user);
     }
 
     public async Task<Result<AuthResponse>> LoginAsync(
-        string email, 
-        string password, 
+        string email,
+        string password,
         CancellationToken ct = default)
     {
         var user = await userManager.FindByEmailAsync(email);
@@ -89,62 +87,64 @@ public class IdentityService(
                 Error.Validation("User.InvalidCredentials", "Invalid email or password."));
         }
 
-        var roles = await userManager.GetRolesAsync(user);
-        var fullName = $"{user.FirstName} {user.LastName}".Trim();
-        var token = jwtProvider.GenerateToken(user.Id, user.Email!, fullName, roles);
-
-        return new AuthResponse(
-            token, 
-            user.Email!, 
-            fullName, 
-            DateTime.UtcNow.AddMinutes(120));
+        return await CreateAuthResponseAsync(user);
     }
 
     public async Task<Result> ForgotPasswordAsync(string email, CancellationToken ct = default)
     {
         var user = await userManager.FindByEmailAsync(email);
-        
-        // Always return success to prevent email enumeration attacks
+
+        // Always report success for unknown addresses to prevent account enumeration.
         if (user is null)
         {
             return Result.Success();
         }
 
+        var clientBaseUrl = configuration["ClientApp:BaseUrl"];
+        if (string.IsNullOrWhiteSpace(clientBaseUrl))
+        {
+            logger.LogError("ClientApp:BaseUrl is not configured; password reset email was not queued");
+            return Result.Failure(Error.Failure(
+                "PasswordReset.ClientNotConfigured",
+                "Password reset is temporarily unavailable."));
+        }
+
         var token = await userManager.GeneratePasswordResetTokenAsync(user);
-        var encodedToken = HttpUtility.UrlEncode(token);
+        var resetLink = $"{clientBaseUrl.TrimEnd('/')}/reset-password" +
+                        $"?email={HttpUtility.UrlEncode(user.Email)}&token={HttpUtility.UrlEncode(token)}";
 
-        var clientBaseUrl = configuration.GetValue<string>("ClientApp:BaseUrl") ?? "https://localhost:5001";
-        var resetLink = $"{clientBaseUrl}/reset-password?email={HttpUtility.UrlEncode(user.Email)}&token={encodedToken}";
-
+        var safeFirstName = WebUtility.HtmlEncode(user.FirstName ?? string.Empty);
         var emailPayload = new EmailOutboxPayload
         {
             To = user.Email!,
             Subject = "Password Reset Request",
-            Body = $@"
-                <h2>Password Reset Request</h2>
-                <p>Hello {user.FirstName},</p>
-                <p>We received a request to reset your password. Click the link below to set a new password:</p>
-                <p><a href='{resetLink}' style='padding: 10px 18px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px;'>Reset Password</a></p>
-                <p>If you did not request this, you can safely ignore this email.</p>
-                <p>This link is time-limited and can only be used once.</p>",
+            Body = $"""
+                    <h2>Password Reset Request</h2>
+                    <p>Hello {safeFirstName},</p>
+                    <p>We received a request to reset your password. Click the link below to set a new password:</p>
+                    <p><a href="{WebUtility.HtmlEncode(resetLink)}" style="padding: 10px 18px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px;">Reset Password</a></p>
+                    <p>If you did not request this, you can safely ignore this email.</p>
+                    <p>This link is time-limited and can only be used once.</p>
+                    """,
             IsHtml = true
         };
 
-        // Write to Transactional Outbox table in the same database context
-        var outboxMessageResult = OutboxMessage.Create("Email", JsonSerializer.Serialize(emailPayload));
-        if (outboxMessageResult.IsSuccess)
+        var outboxResult = OutboxMessage.Create("Email", JsonSerializer.Serialize(emailPayload));
+        if (outboxResult.IsFailure)
         {
-            dbContext.OutboxMessages.Add(outboxMessageResult.Value);
-            await dbContext.SaveChangesAsync(ct);
+            return Result.Failure(outboxResult.Error!);
         }
+
+        dbContext.OutboxMessages.Add(outboxResult.Value);
+        await dbContext.SaveChangesAsync(ct);
 
         return Result.Success();
     }
 
     public async Task<Result> ResetPasswordAsync(
-        string email, 
-        string token, 
-        string newPassword, 
+        string email,
+        string token,
+        string newPassword,
         CancellationToken ct = default)
     {
         var user = await userManager.FindByEmailAsync(email);
@@ -166,78 +166,125 @@ public class IdentityService(
     }
 
     public async Task<Result<AuthResponse>> GoogleLoginAsync(
-        string idToken, 
+        string idToken,
         CancellationToken ct = default)
     {
-        try
+        var validation = await googleTokenValidator.ValidateAsync(idToken, ct);
+        if (validation.IsFailure)
         {
-            // Validate Google ID Token securely
-            var payload = await GoogleJsonWebSignature.ValidateAsync(idToken);
-
-            if (payload is null)
-            {
-                return Result.Failure<AuthResponse>(
-                    Error.Validation("GoogleAuth.InvalidToken", "Invalid Google ID token."));
-            }
-
-            // Look up existing user by Google Login Provider or Email
-            var user = await userManager.FindByLoginAsync("Google", payload.Subject)
-                       ?? await userManager.FindByEmailAsync(payload.Email);
-
-            if (user is null)
-            {
-                // Register new user authenticated via Google
-                user = new AppUser
-                {
-                    Id = Guid.NewGuid(),
-                    UserName = payload.Email,
-                    Email = payload.Email,
-                    FirstName = payload.GivenName ?? "GoogleUser",
-                    LastName = payload.FamilyName ?? string.Empty,
-                    PictureUrl = payload.Picture,
-                    EmailConfirmed = true
-                };
-
-                var createResult = await userManager.CreateAsync(user);
-                if (!createResult.Succeeded)
-                {
-                    var firstError = createResult.Errors.FirstOrDefault()?.Description ?? "Failed to create user.";
-                    return Result.Failure<AuthResponse>(Error.Validation("User.CreationFailed", firstError));
-                }
-
-                await userManager.AddLoginAsync(user, new UserLoginInfo("Google", payload.Subject, "Google"));
-            }
-            else
-            {
-                // Link Google account safely if not already linked
-                var logins = await userManager.GetLoginsAsync(user);
-                if (!logins.Any(l => l.LoginProvider == "Google" && l.ProviderKey == payload.Subject))
-                {
-                    await userManager.AddLoginAsync(user, new UserLoginInfo("Google", payload.Subject, "Google"));
-                }
-            }
-
-            var roles = await userManager.GetRolesAsync(user);
-            var fullName = $"{user.FirstName} {user.LastName}".Trim();
-            var token = jwtProvider.GenerateToken(user.Id, user.Email!, fullName, roles);
-
-            return new AuthResponse(
-                token, 
-                user.Email!, 
-                fullName, 
-                DateTime.UtcNow.AddMinutes(120));
+            return Result.Failure<AuthResponse>(validation.Error!);
         }
-        catch (InvalidJwtException ex)
+
+        var identity = validation.Value!;
+
+        // Only a previously linked provider key may authenticate an existing account.
+        // Matching email addresses are never enough to link a Google identity.
+        var linkedUser = await userManager.FindByLoginAsync(GoogleProvider, identity.Subject);
+        var emailOwner = linkedUser is null
+            ? await userManager.FindByEmailAsync(identity.Email)
+            : null;
+
+        var decision = GoogleLinkingRules.DecideLogin(linkedUser is not null, emailOwner is not null);
+
+        if (decision == GoogleLoginDecision.RejectUnlinkedEmailOwner)
         {
-            logger.LogError(ex, "Google token validation failed");
-            return Result.Failure<AuthResponse>(
-                Error.Validation("GoogleAuth.InvalidToken", "Invalid or expired Google token."));
+            return Result.Failure<AuthResponse>(Error.Conflict(
+                "GoogleAuth.EmailAlreadyRegistered",
+                "An account with this email already exists. Sign in with your password and link Google from your account settings."));
         }
-        catch (Exception ex)
+
+        if (decision == GoogleLoginDecision.UseLinkedUser)
         {
-            logger.LogError(ex, "Google login failed unexpectedly");
-            return Result.Failure<AuthResponse>(
-                Error.Failure("GoogleAuth.Failed", "An error occurred during Google authentication."));
+            return await CreateAuthResponseAsync(linkedUser!);
         }
+
+        var user = new AppUser
+        {
+            Id = Guid.NewGuid(),
+            UserName = identity.Email,
+            Email = identity.Email,
+            FirstName = identity.FirstName ?? "GoogleUser",
+            LastName = identity.LastName ?? string.Empty,
+            PictureUrl = identity.Picture,
+            EmailConfirmed = true
+        };
+
+        var createResult = await userManager.CreateAsync(user);
+        if (!createResult.Succeeded)
+        {
+            return Result.Failure<AuthResponse>(Error.Validation(
+                "User.CreationFailed",
+                createResult.Errors.FirstOrDefault()?.Description ?? "Failed to create user."));
+        }
+
+        var addLoginResult = await userManager.AddLoginAsync(
+            user, new UserLoginInfo(GoogleProvider, identity.Subject, GoogleProvider));
+
+        if (!addLoginResult.Succeeded)
+        {
+            return Result.Failure<AuthResponse>(Error.Validation(
+                "GoogleAuth.LinkFailed",
+                addLoginResult.Errors.FirstOrDefault()?.Description ?? "Failed to link Google account."));
+        }
+
+        return await CreateAuthResponseAsync(user);
+    }
+
+    public async Task<Result> LinkGoogleAccountAsync(
+        string idToken,
+        Guid authenticatedUserId,
+        CancellationToken ct = default)
+    {
+        var validation = await googleTokenValidator.ValidateAsync(idToken, ct);
+        if (validation.IsFailure)
+        {
+            return Result.Failure(validation.Error!);
+        }
+
+        var identity = validation.Value!;
+        var user = await userManager.FindByIdAsync(authenticatedUserId.ToString());
+
+        if (user is null)
+        {
+            return Result.Failure(Error.Unauthorized("Auth.Unauthenticated", "You must be signed in to link an account."));
+        }
+
+        if (!GoogleLinkingRules.CanExplicitlyLink(user.Email, identity.Email))
+        {
+            return Result.Failure(Error.Forbidden(
+                "GoogleAuth.EmailMismatch",
+                "The Google account email must match the email of the signed-in user."));
+        }
+
+        var owner = await userManager.FindByLoginAsync(GoogleProvider, identity.Subject);
+        if (owner is not null)
+        {
+            return owner.Id == user.Id
+                ? Result.Success()
+                : Result.Failure(Error.Conflict(
+                    "GoogleAuth.AlreadyLinked",
+                    "This Google account is already linked to a different user."));
+        }
+
+        var addResult = await userManager.AddLoginAsync(
+            user, new UserLoginInfo(GoogleProvider, identity.Subject, GoogleProvider));
+
+        return addResult.Succeeded
+            ? Result.Success()
+            : Result.Failure(Error.Validation(
+                "GoogleAuth.LinkFailed",
+                addResult.Errors.FirstOrDefault()?.Description ?? "Failed to link Google account."));
+    }
+
+    private async Task<AuthResponse> CreateAuthResponseAsync(AppUser user)
+    {
+        var roles = await userManager.GetRolesAsync(user);
+        var fullName = $"{user.FirstName} {user.LastName}".Trim();
+
+        return new AuthResponse(
+            jwtProvider.GenerateToken(user.Id, user.Email!, fullName, roles),
+            user.Email!,
+            fullName,
+            DateTime.UtcNow.AddMinutes(jwtOptions.Value.ExpirationMinutes));
     }
 }

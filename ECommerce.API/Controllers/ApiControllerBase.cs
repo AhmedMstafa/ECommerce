@@ -34,6 +34,18 @@ public class ApiControllerBase : ControllerBase
                     Title = "Conflict",
                     Detail = error.Message
                 }),
+                ErrorType.Unauthorized => Unauthorized(new ProblemDetails
+                {
+                    Status = StatusCodes.Status401Unauthorized,
+                    Title = "Unauthorized",
+                    Detail = error.Message
+                }),
+                ErrorType.Forbidden => StatusCode(StatusCodes.Status403Forbidden, new ProblemDetails
+                {
+                    Status = StatusCodes.Status403Forbidden,
+                    Title = "Forbidden",
+                    Detail = error.Message
+                }),
                 _ => StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails
                 {
                     Status = StatusCodes.Status500InternalServerError,

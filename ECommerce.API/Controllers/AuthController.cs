@@ -1,12 +1,17 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using Asp.Versioning;
 using ECommerce.API.Models;
+using ECommerce.Domain.Common;
 using ECommerce.UseCases.Auth.Commands.ForgotPassword;
 using ECommerce.UseCases.Auth.Commands.GoogleLogin;
+using ECommerce.UseCases.Auth.Commands.LinkGoogleAccount;
 using ECommerce.UseCases.Auth.Commands.Login;
 using ECommerce.UseCases.Auth.Commands.Register;
 using ECommerce.UseCases.Auth.Commands.ResetPassword;
 using ECommerce.UseCases.Common.Auth;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 
@@ -57,7 +62,13 @@ public class AuthController(ISender sender) : ApiControllerBase
         [FromBody] ForgotPasswordCommand command,
         CancellationToken cancellationToken = default)
     {
-        await sender.Send(command, cancellationToken);
+        var result = await sender.Send(command, cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return FromResult(Result.Failure<string>(result.Error!));
+        }
+
         return Ok(ApiResponse<string>.SuccessResponse("If your email is registered, you will receive password reset instructions."));
     }
 
@@ -72,14 +83,10 @@ public class AuthController(ISender sender) : ApiControllerBase
         CancellationToken cancellationToken = default)
     {
         var result = await sender.Send(command, cancellationToken);
+
         if (result.IsFailure)
         {
-            return BadRequest(new ProblemDetails
-            {
-                Status = StatusCodes.Status400BadRequest,
-                Title = "Password Reset Failed",
-                Detail = result.Error?.Message
-            });
+            return FromResult(Result.Failure<string>(result.Error!));
         }
 
         return Ok(ApiResponse<string>.SuccessResponse("Password has been reset successfully. You can now log in."));
@@ -98,4 +105,48 @@ public class AuthController(ISender sender) : ApiControllerBase
         var result = await sender.Send(command, cancellationToken);
         return FromResult(result);
     }
+
+    /// <summary>
+    /// Links a verified Google identity to the currently authenticated account.
+    /// The user id is read from the token principal, never from the request body.
+    /// </summary>
+    [HttpPost("link-google")]
+    [Authorize]
+    [ProducesResponseType(typeof(ApiResponse<string>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ApiResponse<string>>> LinkGoogle(
+        [FromBody] LinkGoogleAccountRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var userIdValue = User.FindFirstValue(ClaimTypes.NameIdentifier)
+                          ?? User.FindFirstValue(JwtRegisteredClaimNames.Sub);
+
+        if (!Guid.TryParse(userIdValue, out var userId))
+        {
+            return Unauthorized(new ProblemDetails
+            {
+                Status = StatusCodes.Status401Unauthorized,
+                Title = "Unauthorized",
+                Detail = "A valid authenticated user is required."
+            });
+        }
+
+        var result = await sender.Send(
+            new LinkGoogleAccountCommand(request.IdToken, userId),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return FromResult(Result.Failure<string>(result.Error!));
+        }
+
+        return Ok(ApiResponse<string>.SuccessResponse("Google account linked successfully."));
+    }
 }
+
+/// <summary>
+/// Request body for explicit Google account linking.
+/// </summary>
+public sealed record LinkGoogleAccountRequest(string IdToken);

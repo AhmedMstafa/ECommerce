@@ -21,6 +21,16 @@ public class SmtpEmailService(
         bool isHtml = true, 
         CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(_settings.SmtpServer) ||
+            string.IsNullOrWhiteSpace(_settings.SenderEmail))
+        {
+            // A missing configuration is a failure, not a successful "send".
+            // The outbox processor will retry it and eventually dead-letter it.
+            return Result.Failure(Error.Failure(
+                "Email.NotConfigured",
+                "SMTP server and sender address must be configured."));
+        }
+
         try
         {
             var message = new MimeMessage();
@@ -42,32 +52,28 @@ public class SmtpEmailService(
 
             using var client = new MailKit.Net.Smtp.SmtpClient();
 
-            // Try connecting to SMTP server if configured
-            if (!string.IsNullOrWhiteSpace(_settings.SmtpServer) && _settings.SmtpServer != "localhost")
-            {
-                await client.ConnectAsync(_settings.SmtpServer, _settings.Port, 
-                    _settings.EnableSsl ? SecureSocketOptions.StartTls : SecureSocketOptions.None, ct);
+            var socketOptions = _settings.EnableSsl
+                ? SecureSocketOptions.StartTls
+                : SecureSocketOptions.None;
 
-                if (!string.IsNullOrWhiteSpace(_settings.Username) && !string.IsNullOrWhiteSpace(_settings.Password))
-                {
-                    await client.AuthenticateAsync(_settings.Username, _settings.Password, ct);
-                }
+            await client.ConnectAsync(_settings.SmtpServer, _settings.Port, socketOptions, ct);
 
-                await client.SendAsync(message, ct);
-                await client.DisconnectAsync(true, ct);
-            }
-            else
+            if (!string.IsNullOrWhiteSpace(_settings.Username) && !string.IsNullOrWhiteSpace(_settings.Password))
             {
-                // In local dev without live SMTP, log the email body
-                logger.LogInformation("[EMAIL DISPATCHED] To: {To} | Subject: {Subject} | Body length: {Length}", 
-                    to, subject, body.Length);
+                await client.AuthenticateAsync(_settings.Username, _settings.Password, ct);
             }
+
+            await client.SendAsync(message, ct);
+            await client.DisconnectAsync(true, ct);
+
+            logger.LogInformation("Email sent with subject {Subject}", subject);
 
             return Result.Success();
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to send email to {To}", to);
+            // Do not log the recipient address: it is personal data.
+            logger.LogError(ex, "Failed to send email with subject {Subject}", subject);
             return Result.Failure(Error.Failure("Email.SendFailed", $"Failed to send email: {ex.Message}"));
         }
     }

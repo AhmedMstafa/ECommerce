@@ -16,7 +16,8 @@ public class LoggingBehavior<TRequest, TResponse>(ILogger<LoggingBehavior<TReque
         var requestName = typeof(TRequest).Name;
         var stopwatch = Stopwatch.StartNew();
 
-        logger.LogInformation("[START] Handling command/query {RequestName} {@Request}", requestName, request);
+        // Never destructuring {Request}: auth requests contain passwords and ID tokens.
+        logger.LogInformation("[START] Handling command/query {RequestName}", requestName);
 
         try
         {

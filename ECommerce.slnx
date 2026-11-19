@@ -7,5 +7,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="ECommerce.ArchitectureTests/ECommerce.ArchitectureTests.csproj" />
+    <Project Path="ECommerce.UnitTests/ECommerce.UnitTests.csproj" />
   </Folder>
 </Solution>
