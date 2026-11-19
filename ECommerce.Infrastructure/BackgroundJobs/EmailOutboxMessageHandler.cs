@@ -1,17 +1,8 @@
 using System.Text.Json;
 using ECommerce.Domain.Entities;
-using ECommerce.Domain.Common;
 using ECommerce.UseCases.Common.Email;
 
 namespace ECommerce.Infrastructure.BackgroundJobs;
-
-public sealed class EmailOutboxPayload
-{
-    public string To { get; set; } = default!;
-    public string Subject { get; set; } = default!;
-    public string Body { get; set; } = default!;
-    public bool IsHtml { get; set; } = true;
-}
 
 public sealed class EmailOutboxMessageHandler(IEmailService emailService) : IOutboxMessageHandler
 {

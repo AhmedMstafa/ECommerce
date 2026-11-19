@@ -1,11 +1,6 @@
-using System.Net;
-using System.Text.Json;
-using System.Web;
 using ECommerce.Domain.Common;
 using ECommerce.Domain.Entities;
 using ECommerce.Infrastructure.Auth;
-using ECommerce.Infrastructure.BackgroundJobs;
-using ECommerce.Infrastructure.Email;
 using ECommerce.Infrastructure.Persistence;
 using ECommerce.UseCases.Common.Auth;
 using Microsoft.AspNetCore.Identity;
@@ -111,26 +106,15 @@ public class IdentityService(
         }
 
         var token = await userManager.GeneratePasswordResetTokenAsync(user);
-        var resetLink = $"{clientBaseUrl.TrimEnd('/')}/reset-password" +
-                        $"?email={HttpUtility.UrlEncode(user.Email)}&token={HttpUtility.UrlEncode(token)}";
 
-        var emailPayload = new EmailOutboxPayload
-        {
-            To = user.Email!,
-            Subject = EmailTemplates.PasswordResetSubject,
-            Body = EmailTemplates.RenderPasswordReset(user.FirstName ?? string.Empty, resetLink),
-            IsHtml = true
-        };
-
-        // Including the token makes each reset request a distinct email. If the
-        // same request is retried, the derived key stays identical so the
-        // outbox's unique index prevents a duplicate row.
-        var idempotencyKey = $"password-reset:{user.Id}:{token}";
-
-        var outboxResult = OutboxMessage.Create(
-            "Email",
-            JsonSerializer.Serialize(emailPayload),
-            idempotencyKey: idempotencyKey);
+        // Application rules own link construction, HTML encoding, the outbox
+        // payload, and its idempotency key. Infrastructure only persists it.
+        var outboxResult = PasswordResetOutboxFactory.Create(
+            clientBaseUrl,
+            user.Email!,
+            user.FirstName ?? string.Empty,
+            user.Id,
+            token);
         if (outboxResult.IsFailure)
         {
             return Result.Failure(outboxResult.Error!);
@@ -154,7 +138,7 @@ public class IdentityService(
             return Result.Failure(Error.Validation("PasswordReset.Invalid", "Invalid password reset request."));
         }
 
-        var decodedToken = HttpUtility.UrlDecode(token);
+        var decodedToken = Uri.UnescapeDataString(token);
         var resetResult = await userManager.ResetPasswordAsync(user, decodedToken, newPassword);
 
         if (!resetResult.Succeeded)

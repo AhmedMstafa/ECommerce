@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace ECommerce.Infrastructure.Email;
+namespace ECommerce.UseCases.Common.Email;
 
 /// <summary>
 /// HTML email templates. All dynamic values are HTML-encoded at the point of

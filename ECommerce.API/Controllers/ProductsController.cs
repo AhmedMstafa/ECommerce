@@ -1,5 +1,6 @@
 using Asp.Versioning;
 using ECommerce.API.Models;
+using ECommerce.UseCases.Common.Pagination;
 using ECommerce.UseCases.Products.Commands.CreateProduct;
 using ECommerce.UseCases.Products.Dtos;
 using ECommerce.UseCases.Products.Queries;
@@ -20,20 +21,21 @@ namespace ECommerce.API.Controllers;
 public class ProductsController(ISender sender) : ApiControllerBase
 {
     /// <summary>
-    /// Retrieves all available products.
+    /// Retrieves a filtered, sorted page of products with total-count metadata.
     /// </summary>
     /// <param name="parameters">Filtering, sorting, and pagination parameters.</param>
     /// <param name="cancellationToken">A token to cancel the request.</param>
-    /// <returns>A list of products.</returns>
+    /// <returns>A page of products. Invalid pagination or sort values return 400.</returns>
     [HttpGet]
-    [ProducesResponseType(typeof(IReadOnlyList<GetAllProductsResponse>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<IReadOnlyList<GetAllProductsResponse>>> GetAll(
+    [ProducesResponseType(typeof(ApiResponse<PagedResponse<GetAllProductsResponse>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(HttpValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ApiResponse<PagedResponse<GetAllProductsResponse>>>> GetAll(
         [FromQuery] ProductSpecificationParameters? parameters,
         CancellationToken cancellationToken = default)
     {
         var result = await sender.Send(new GetAllProductsQuery(parameters), cancellationToken);
 
-        return Ok(result);
+        return FromResult(result);
     }
 
     /// <summary>

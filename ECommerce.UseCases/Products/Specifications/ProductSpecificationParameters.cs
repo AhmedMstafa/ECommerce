@@ -2,16 +2,17 @@ namespace ECommerce.UseCases.Products.Specifications;
 
 public class ProductSpecificationParameters
 {
-    private const int MaxPageSize = 50;
+    public const int DefaultPageSize = 10;
+    public const int MaxPageSize = 50;
+    public const int MaxSearchLength = 100;
 
     public int PageIndex { get; set; } = 1;
 
-    private int _pageSize = 10;
-    public int PageSize
-    {
-        get => _pageSize;
-        set => _pageSize = (value > MaxPageSize) ? MaxPageSize : (value <= 0 ? 10 : value);
-    }
+    /// <summary>
+    /// Kept as a plain value so FluentValidation can reject invalid input.
+    /// Silent clamping hid client bugs and made the response metadata misleading.
+    /// </summary>
+    public int PageSize { get; set; } = DefaultPageSize;
 
     public Guid? BrandId { get; set; }
 
@@ -23,6 +24,8 @@ public class ProductSpecificationParameters
     public string? Search
     {
         get => _search;
-        set => _search = value?.Trim().ToLower();
+        set => _search = string.IsNullOrWhiteSpace(value)
+            ? null
+            : value.Trim().ToLowerInvariant();
     }
 }

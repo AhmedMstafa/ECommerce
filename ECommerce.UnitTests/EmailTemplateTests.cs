@@ -1,4 +1,4 @@
-using ECommerce.Infrastructure.Email;
+using ECommerce.UseCases.Common.Email;
 using FluentAssertions;
 
 namespace ECommerce.UnitTests;
