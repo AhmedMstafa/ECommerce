@@ -20,6 +20,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
+using Resend;
 
 namespace ECommerce.Infrastructure;
 
@@ -129,7 +130,11 @@ public static class DependancyInjection
 
         // 4. Email Services & Settings
         services.Configure<EmailSettings>(configuration.GetSection("EmailSettings"));
-        services.AddTransient<IEmailService, SmtpEmailService>();
+        services.AddResend(options =>
+        {
+            options.ApiToken = configuration["EmailSettings:ApiKey"] ?? string.Empty;
+        });
+        services.AddTransient<IEmailService, ResendEmailService>();
         services.AddKeyedScoped<IOutboxMessageHandler, EmailOutboxMessageHandler>("Email");
 
         // 5. Caching
