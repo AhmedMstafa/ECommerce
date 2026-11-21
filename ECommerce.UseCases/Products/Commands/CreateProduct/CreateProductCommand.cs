@@ -12,7 +12,8 @@ public record CreateProductCommand(
     string PictureUrl,
     decimal Price,
     Guid ProductBrandId,
-    Guid ProductTypeId) : IRequest<Result<Guid>>;
+    Guid ProductTypeId,
+    int StockQuantity = 0) : IRequest<Result<Guid>>;
 
 public class CreateProductCommandHandler(
     IUnitOfWork unitOfWork,
@@ -29,7 +30,8 @@ public class CreateProductCommandHandler(
             request.PictureUrl,
             request.Price,
             request.ProductBrandId,
-            request.ProductTypeId);
+            request.ProductTypeId,
+            stockQuantity: request.StockQuantity);
 
         if (productResult.IsFailure)
         {
@@ -39,7 +41,7 @@ public class CreateProductCommandHandler(
         unitOfWork.Repository<Product>().Add(productResult.Value);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        await cacheService.RemoveByPrefixAsync("products", cancellationToken);
+        await cacheService.RemoveByPrefixAsync(CacheScopes.Products, cancellationToken);
 
         return productResult.Value.Id;
     }

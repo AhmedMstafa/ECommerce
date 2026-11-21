@@ -1,6 +1,7 @@
 using System.Text;
 using ECommerce.Domain.Repositories;
 using ECommerce.Infrastructure.Auth;
+using ECommerce.Infrastructure.Baskets;
 using ECommerce.Infrastructure.BackgroundJobs;
 using ECommerce.Infrastructure.Caching;
 using ECommerce.Infrastructure.Email;
@@ -10,6 +11,7 @@ using ECommerce.Infrastructure.Persistence;
 using ECommerce.Infrastructure.Repositories;
 using ECommerce.Infrastructure.Seeding;
 using ECommerce.UseCases.Common.Auth;
+using ECommerce.UseCases.Common.Baskets;
 using ECommerce.UseCases.Common.Caching;
 using ECommerce.UseCases.Common.Email;
 using Hangfire;
@@ -21,6 +23,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using Resend;
+using StackExchange.Redis;
 
 namespace ECommerce.Infrastructure;
 
@@ -137,9 +140,35 @@ public static class DependancyInjection
         services.AddTransient<IEmailService, ResendEmailService>();
         services.AddKeyedScoped<IOutboxMessageHandler, EmailOutboxMessageHandler>("Email");
 
-        // 5. Caching
-        services.AddMemoryCache();
-        services.AddSingleton<ICacheService, MemoryCacheService>();
+        // 5. Caching - Upstash Redis through IDistributedCache.
+        var redisSettings = configuration.GetSection(RedisSettings.SectionName).Get<RedisSettings>() ?? new();
+        redisSettings.Validate();
+        services.Configure<RedisSettings>(configuration.GetSection(RedisSettings.SectionName));
+
+        var redisOptions = redisSettings.ToConfigurationOptions();
+
+        // One multiplexer for the process lifetime, used by the generation
+        // counters, the cache service and the framework RedisCache alike.
+        // The Lazy keeps startup non-blocking while guaranteeing one instance.
+        var multiplexer = new Lazy<IConnectionMultiplexer>(
+            () => ConnectionMultiplexer.Connect(redisOptions));
+        services.AddSingleton<IConnectionMultiplexer>(_ => multiplexer.Value);
+
+        services.AddStackExchangeRedisCache(options =>
+        {
+            options.ConfigurationOptions = redisOptions;
+            options.InstanceName = redisSettings.InstanceName;
+            options.ConnectionMultiplexerFactory = () => Task.FromResult(multiplexer.Value);
+        });
+
+        services.AddSingleton<ICacheService, RedisCacheService>();
+
+        // 5b. Basket storage - Redis documents via the shared multiplexer.
+        services.Configure<BasketSettings>(configuration.GetSection(BasketSettings.SectionName));
+        var basketSettings = configuration.GetSection(BasketSettings.SectionName).Get<BasketSettings>() ?? new();
+        basketSettings.Validate();
+        services.AddSingleton<IBasketStore, RedisBasketStore>();
+        services.AddSingleton(TimeProvider.System);
 
         // 6. Outbox processing infrastructure
         services.AddSingleton<IOutboxClock, SystemOutboxClock>();

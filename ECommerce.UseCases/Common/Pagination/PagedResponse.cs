@@ -1,12 +1,13 @@
 namespace ECommerce.UseCases.Common.Pagination;
 
 /// <summary>
-/// Small immutable value object for page results. Keeping this in UseCases
-/// avoids leaking page math into controllers or persisting it in the database.
+/// Reusable immutable page result. Keeping this in UseCases avoids leaking page
+/// math into controllers or persisting it in the database. The API layer maps
+/// these values into its response metadata without changing this shape.
 /// </summary>
 public sealed record PagedResponse<T>(
     IReadOnlyList<T> Items,
-    int PageIndex,
+    int PageNumber,
     int PageSize,
     int TotalCount)
 {
@@ -14,7 +15,7 @@ public sealed record PagedResponse<T>(
         ? 0
         : (int)Math.Ceiling(TotalCount / (double)PageSize);
 
-    public bool HasPrevious => PageIndex > 1;
+    public bool HasPreviousPage => PageNumber > 1;
 
-    public bool HasNext => PageIndex < TotalPages;
+    public bool HasNextPage => PageNumber < TotalPages;
 }

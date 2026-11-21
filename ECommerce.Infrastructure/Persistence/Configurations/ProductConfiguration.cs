@@ -23,6 +23,9 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
         builder.Property(x => x.Price)
             .HasPrecision(18, 2);
 
+        builder.Property(x => x.StockQuantity)
+            .HasDefaultValue(0);
+
         // The inverse navigations are configured here as well, so EF Core does
         // not create a second shadow relationship (ProductBrandId1).
         // Keep the legacy column as a scalar shadow property: existing databases

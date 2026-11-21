@@ -26,5 +26,8 @@ public class CreateProductCommandValidator : AbstractValidator<CreateProductComm
 
         RuleFor(x => x.ProductTypeId)
             .NotEmpty().WithMessage("Type ID is required.");
+
+        RuleFor(x => x.StockQuantity)
+            .GreaterThanOrEqualTo(0).WithMessage("Product stock quantity cannot be negative.");
     }
 }

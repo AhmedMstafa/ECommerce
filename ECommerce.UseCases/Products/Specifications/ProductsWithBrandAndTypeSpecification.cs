@@ -12,26 +12,50 @@ public class ProductsWithBrandAndTypeSpecification : BaseSpecification<Product>
         Query.Include(p => p.Brand);
         Query.Include(p => p.Type);
 
+        var (field, direction) = ProductSortOptions.Resolve(parameters);
+        var descending = string.Equals(direction, ProductSortOptions.Descending, StringComparison.OrdinalIgnoreCase);
+
         // A deterministic tie-breaker is required for stable pagination. Without
         // it, SQL Server may return a different order for equal prices/names on
         // consecutive requests and clients can see duplicates or missing rows.
-        switch (parameters.Sort?.ToLowerInvariant())
+        switch (field.ToLowerInvariant())
         {
-            case ProductSortOptions.PriceAscending:
-                Query.OrderBy(p => p.Price).ThenBy(p => p.Name).ThenBy(p => p.Id);
+            case ProductSortOptions.Price:
+                if (descending)
+                {
+                    Query.OrderByDescending(p => p.Price).ThenByDescending(p => p.Name).ThenBy(p => p.Id);
+                }
+                else
+                {
+                    Query.OrderBy(p => p.Price).ThenBy(p => p.Name).ThenBy(p => p.Id);
+                }
                 break;
-            case ProductSortOptions.PriceDescending:
-                Query.OrderByDescending(p => p.Price).ThenBy(p => p.Name).ThenBy(p => p.Id);
+
+            case ProductSortOptions.CreatedAt:
+                if (descending)
+                {
+                    Query.OrderByDescending(p => p.CreatedAt).ThenByDescending(p => p.Id);
+                }
+                else
+                {
+                    Query.OrderBy(p => p.CreatedAt).ThenBy(p => p.Id);
+                }
                 break;
-            case ProductSortOptions.NameDescending:
-                Query.OrderByDescending(p => p.Name).ThenBy(p => p.Id);
-                break;
+
             default:
-                Query.OrderBy(p => p.Name).ThenBy(p => p.Id);
+                if (descending)
+                {
+                    Query.OrderByDescending(p => p.Name).ThenByDescending(p => p.Id);
+                }
+                else
+                {
+                    Query.OrderBy(p => p.Name).ThenBy(p => p.Id);
+                }
                 break;
         }
 
-        Query.Paginate(parameters.PageIndex, parameters.PageSize);
+        // The evaluator applies ordering before Skip/Take, so paging is stable.
+        Query.Paginate(parameters.PageNumber, parameters.PageSize);
     }
 
     public ProductsWithBrandAndTypeSpecification()

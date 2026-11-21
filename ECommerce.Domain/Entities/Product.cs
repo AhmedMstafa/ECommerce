@@ -9,6 +9,12 @@ namespace ECommerce.Domain.Entities
         public string PictureUrl { get; private set; } = default!;
         public decimal Price { get; private set; } = default!;
 
+        /// <summary>
+        /// Current sellable quantity. Baskets read this from SQL as the
+        /// authoritative availability value; adding to a basket never reserves it.
+        /// </summary>
+        public int StockQuantity { get; private set; }
+
         public Guid ProductBrandId { get; private set; }
         public ProductBrand Brand { get; private set; } = default!;
 
@@ -24,13 +30,15 @@ namespace ECommerce.Domain.Entities
             decimal price,
             Guid productBrandId,
             Guid productTypeId,
-            Guid id = default)
+            Guid id = default,
+            int stockQuantity = 0)
         {
             Id = id == default ? Guid.NewGuid() : id;
             Name = name;
             Description = description;
             PictureUrl = pictureUrl;
             Price = price;
+            StockQuantity = stockQuantity;
             ProductBrandId = productBrandId;
             ProductTypeId = productTypeId;
             CreatedAt = DateTime.UtcNow;
@@ -44,7 +52,8 @@ namespace ECommerce.Domain.Entities
             decimal price,
             Guid productBrandId,
             Guid productTypeId,
-            Guid id = default)
+            Guid id = default,
+            int stockQuantity = 0)
         {
             if (string.IsNullOrWhiteSpace(name))
                 return ProductErrors.EmptyName;
@@ -67,13 +76,16 @@ namespace ECommerce.Domain.Entities
             if (price < 0)
                 return ProductErrors.NegativePrice;
 
+            if (stockQuantity < 0)
+                return ProductErrors.NegativeStock;
+
             if (productBrandId == Guid.Empty)
                 return ProductErrors.EmptyBrand;
 
             if (productTypeId == Guid.Empty)
                 return ProductErrors.EmptyType;
 
-            return new Product(name, description, pictureUrl, price, productBrandId, productTypeId, id);
+            return new Product(name, description, pictureUrl, price, productBrandId, productTypeId, id, stockQuantity);
         }
 
         public Result UpdateDetails(
@@ -151,6 +163,16 @@ namespace ECommerce.Domain.Entities
                 return ProductErrors.NegativePrice;
 
             Price = newPrice;
+            UpdatedAt = DateTimeOffset.UtcNow;
+            return Result.Success();
+        }
+
+        public Result UpdateStock(int stockQuantity)
+        {
+            if (stockQuantity < 0)
+                return ProductErrors.NegativeStock;
+
+            StockQuantity = stockQuantity;
             UpdatedAt = DateTimeOffset.UtcNow;
             return Result.Success();
         }

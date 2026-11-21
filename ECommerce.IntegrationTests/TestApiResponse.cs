@@ -9,4 +9,14 @@ public sealed record TestApiResponse<T>(
     int StatusCode,
     bool Success,
     T? Data,
-    string? Message);
+    string? Message,
+    TestApiMeta? Meta);
+
+public sealed record TestApiMeta(
+    string TraceId,
+    int? PageNumber,
+    int? PageSize,
+    int? TotalCount,
+    int? TotalPages,
+    bool? HasPreviousPage,
+    bool? HasNextPage);

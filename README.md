@@ -40,6 +40,12 @@ Then edit `.env`:
 - `ConnectionStrings__DefaultConnection` — **required**; a local SQL Server with
   integrated authentication is the default. Use `User Id` / `Password` there if
   your server requires SQL authentication.
+- `Redis__Configuration` — **required**; the Upstash Redis connection string in
+  `rediss://default:PASSWORD@host:6379` form. The `rediss://` scheme enables TLS.
+  Startup fails fast with a clear message if this is missing or still a
+  placeholder; the value is never printed. See
+  [docs/caching-pagination-validation.md](docs/caching-pagination-validation.md).
+- `Redis__InstanceName` — optional; key prefix, defaults to `ECommerce:`.
 - `GoogleAuth__ClientId` — optional; only a Web Client ID is needed, no client
   secret. Without it, Google endpoints return a clear "not configured" error.
 - `EmailSettings__*` and `ClientApp__BaseUrl` — optional; needed only for
@@ -97,12 +103,16 @@ etc.):
 | --- | --- |
 | `Jwt:SecretKey` | `Jwt__SecretKey` |
 | `ConnectionStrings:DefaultConnection` | `ConnectionStrings__DefaultConnection` |
+| `Redis:Configuration` | `Redis__Configuration` |
+| `Redis:InstanceName` | `Redis__InstanceName` |
 | `GoogleAuth:ClientId` | `GoogleAuth__ClientId` |
 | `EmailSettings:Password` | `EmailSettings__Password` |
 | `ClientApp:BaseUrl` | `ClientApp__BaseUrl` |
 
-Missing `Jwt:SecretKey` or `ConnectionStrings:DefaultConnection` produces a
-clear startup error that names the key but never prints a value.
+Missing `Jwt:SecretKey`, `ConnectionStrings:DefaultConnection`, or
+`Redis:Configuration` produces a clear startup error that names the key but
+never prints a value. Redis connection failures at runtime are logged as
+warnings and degrade to SQL Server; they do not fail product queries.
 
 ## Design notes
 
@@ -111,8 +121,9 @@ clear startup error that names the key but never prints a value.
 - [docs/outbox-and-resilience.md](docs/outbox-and-resilience.md) — outbox state
   machine, leases, exponential backoff, idempotency, and scoped resilience.
 - [docs/caching-pagination-validation.md](docs/caching-pagination-validation.md)
-  — single-flight memory cache, generation-aware invalidation, explicit page
-  validation, and the `PagedResponse<T>` value object.
+  — Upstash Redis setup, distributed cache with single-flight reads,
+  generation-based invalidation, explicit page validation, and the
+  `PagedResponse<T>` value object.
 - [docs/integration-testing.md](docs/integration-testing.md) — real SQL Server
   test lifecycle and why configuration is injected through environment
   variables.
@@ -121,7 +132,8 @@ Selected operational decisions:
 
 - Hangfire's SQL Server storage is retained, but its dashboard requires an
   authenticated `Admin` in every environment.
-- `IMemoryCache` is retained; there is no Redis dependency.
+- `IMemoryCache` is fully removed; product, brand, and type reads are cached in
+  Upstash Redis through `IDistributedCache`.
 - A Google identity is never auto-linked merely because its verified email
   matches an existing account. Linking is explicit and authenticated.
 - Strong password rules apply to new registrations and password changes;

@@ -67,6 +67,91 @@ public class SpecificationTests
     }
 
     [Fact]
+    public void Specification_ShouldFilterByPriceRange()
+    {
+        // Arrange
+        var parameters = new ProductSpecificationParameters
+        {
+            MinPrice = 400m,
+            MaxPrice = 700m
+        };
+        var spec = new ProductsWithBrandAndTypeSpecification(parameters);
+
+        // Act
+        var query = SpecificationEvaluator.GetQuery(_products.AsQueryable(), spec);
+        var result = query.ToList();
+
+        // Assert
+        result.Select(p => p.Name).Should().BeEquivalentTo("Alpha Phone", "Delta Tablet");
+    }
+
+    [Fact]
+    public void Specification_ShouldSearchDescriptionAsWellAsName()
+    {
+        // Arrange
+        var products = new[]
+        {
+            Product.Create("Wallet", "red leather wallet", "pic.png", 50m, _brand1, _type1).Value,
+            Product.Create("Backpack", "blue canvas backpack", "pic.png", 60m, _brand1, _type1).Value
+        };
+        var spec = new ProductsWithBrandAndTypeSpecification(
+            new ProductSpecificationParameters { Search = "canvas" });
+
+        // Act
+        var query = SpecificationEvaluator.GetQuery(products.AsQueryable(), spec);
+        var result = query.ToList();
+
+        // Assert
+        result.Should().ContainSingle().Which.Name.Should().Be("Backpack");
+    }
+
+    [Fact]
+    public void Specification_ShouldSortByCreatedDateDescending()
+    {
+        // Arrange
+        _products[0].CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        _products[1].CreatedAt = new DateTime(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc);
+        _products[2].CreatedAt = new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc);
+        _products[3].CreatedAt = new DateTime(2026, 4, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var spec = new ProductsWithBrandAndTypeSpecification(new ProductSpecificationParameters
+        {
+            SortBy = "createdAt",
+            SortOrder = "desc"
+        });
+
+        // Act
+        var query = SpecificationEvaluator.GetQuery(_products.AsQueryable(), spec);
+        var result = query.ToList();
+
+        // Assert
+        result.Select(p => p.Name).Should().Equal(
+            "Delta Tablet", "Beta Laptop", "Gamma Watch", "Alpha Phone");
+    }
+
+    [Fact]
+    public void Specification_ShouldApplyPagingAfterSorting()
+    {
+        // Arrange
+        var spec = new ProductsWithBrandAndTypeSpecification(new ProductSpecificationParameters
+        {
+            PageNumber = 2,
+            PageSize = 2,
+            SortBy = "price",
+            SortOrder = "asc"
+        });
+
+        // Act
+        var query = SpecificationEvaluator.GetQuery(_products.AsQueryable(), spec);
+        var result = query.ToList();
+
+        // Assert
+        result.Should().HaveCount(2);
+        result[0].Name.Should().Be("Delta Tablet");
+        result[1].Name.Should().Be("Beta Laptop");
+    }
+
+    [Fact]
     public void Specification_ShouldSortByPriceAscending()
     {
         // Arrange
@@ -112,7 +197,7 @@ public class SpecificationTests
         // Arrange
         var parameters = new ProductSpecificationParameters
         {
-            PageIndex = 2,
+            PageNumber = 2,
             PageSize = 2,
             Sort = "priceAsc"
         };

@@ -1,4 +1,5 @@
 using System.Reflection;
+using ECommerce.UseCases.Common.Baskets;
 using ECommerce.UseCases.Common.Behaviors;
 using FluentValidation;
 using Mapster;
@@ -27,6 +28,7 @@ public static class DependancyInjection
         config.Scan(assembly);
         services.AddSingleton(config);
         services.AddMapster();
+        services.AddScoped<IBasketService, BasketService>();
 
         return services;
     }

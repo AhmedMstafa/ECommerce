@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
-using ECommerce.UseCases.Common.Pagination;
 using ECommerce.UseCases.Products.Commands.CreateProduct;
 using ECommerce.UseCases.Products.Dtos;
 using FluentAssertions;
@@ -17,30 +16,52 @@ public sealed class ProductsIntegrationTests(IntegrationTestFixture fixture)
     public async Task GetAll_ShouldReturnPagedEnvelope_WithStableMetadata()
     {
         var response = await fixture.Client.GetAsync(
-            "/api/v1/products?pageIndex=2&pageSize=2&sort=nameasc");
+            "/api/v1/products?pageNumber=2&pageSize=2&sortBy=name&sortOrder=asc");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var body = await response.Content
-            .ReadFromJsonAsync<TestApiResponse<PagedResponse<GetAllProductsResponse>>>();
+            .ReadFromJsonAsync<TestApiResponse<IReadOnlyList<GetAllProductsResponse>>>();
 
         body.Should().NotBeNull();
         body!.Success.Should().BeTrue();
         body.StatusCode.Should().Be(StatusCodes.Status200OK);
-        body.Data!.TotalCount.Should().Be(3);
-        body.Data.TotalPages.Should().Be(2);
-        body.Data.PageIndex.Should().Be(2);
-        body.Data.PageSize.Should().Be(2);
-        body.Data.HasPrevious.Should().BeTrue();
-        body.Data.HasNext.Should().BeFalse();
-        body.Data.Items.Should().ContainSingle()
+        body.Meta.Should().NotBeNull();
+        body.Meta!.TraceId.Should().NotBeNullOrWhiteSpace();
+        body.Meta.PageNumber.Should().Be(2);
+        body.Meta.PageSize.Should().Be(2);
+        body.Meta.TotalCount.Should().Be(3);
+        body.Meta.TotalPages.Should().Be(2);
+        body.Meta.HasPreviousPage.Should().BeTrue();
+        body.Meta.HasNextPage.Should().BeFalse();
+        body.Data.Should().ContainSingle()
             .Which.Name.Should().Be("Gamma Product");
     }
 
+    [Fact]
+    public async Task GetAll_ShouldApplySearchFiltersAndSortingTogether()
+    {
+        var response = await fixture.Client.GetAsync(
+            $"/api/v1/products?search=gamma&brandId={fixture.BrandId}&minPrice=10&maxPrice=40&sortBy=price&sortOrder=desc");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await response.Content
+            .ReadFromJsonAsync<TestApiResponse<IReadOnlyList<GetAllProductsResponse>>>();
+
+        body!.Data.Should().ContainSingle()
+            .Which.Name.Should().Be("Gamma Product");
+        body.Meta!.TotalCount.Should().Be(1);
+    }
+
     [Theory]
-    [InlineData("pageIndex=0", "Page index")]
+    [InlineData("pageNumber=0", "Page number")]
     [InlineData("pageSize=51", "Page size")]
     [InlineData("sort=unknown", "Sort")]
+    [InlineData("sortBy=passwordHash", "SortBy")]
+    [InlineData("sortOrder=sideways", "SortOrder")]
+    [InlineData("minPrice=-1", "MinPrice")]
+    [InlineData("minPrice=100&maxPrice=10", "MinPrice cannot")]
     public async Task GetAll_ShouldReturnValidationProblem_WhenInputIsInvalid(
         string query,
         string expectedMessage)

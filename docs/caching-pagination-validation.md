@@ -1,18 +1,146 @@
 # Caching, pagination, and validation
 
-## Cache consistency
+## Redis cache (Upstash)
 
-`MemoryCacheService` now keeps key and in-flight state on the service instance instead of in static fields. The application registers it as a singleton, so one instance owns one consistent view of its cache.
+`IMemoryCache`, `AddMemoryCache()`, and `MemoryCacheService` have been removed.
+All application caching now flows through the existing `ICacheService`
+abstraction, implemented by `RedisCacheService` in `ECommerce.Infrastructure`:
 
-Three problems were fixed:
+```text
+Product/Brand/Type queries ──► ICacheService ──► RedisCacheService
+                                                   ├─ IDistributedCache
+                                                   │  (AddStackExchangeRedisCache)
+                                                   └─ IConnectionMultiplexer
+                                                      (atomic generation counters)
+```
 
-1. **Cache stampede.** `GetOrCreateAsync` uses a per-key `Lazy<Task<...>>`. Concurrent callers for the same key await one factory invocation.
-2. **Stale writes.** Every invalidation or explicit write bumps a generation. A loader only writes its result if the generation and its flight reference are unchanged when the factory completes. A slow factory therefore cannot resurrect a key that was removed or overwritten while it ran.
-3. **Prefix invalidation.** Matching tracked keys and active flights are removed together. Key normalization is case-insensitive to match the previous API behavior and to keep `Products_1` and `products_1` from becoming separate logical keys.
+`AddStackExchangeRedisCache` is registered in `AddInfrastructure` with a single
+`ConfigurationOptions` object. A single `IConnectionMultiplexer` is registered as
+a singleton and is also supplied to `RedisCacheOptions.ConnectionMultiplexerFactory`,
+so the generation counter, the cache service and the framework `RedisCache` share
+one connection and one client pool. `IDistributedCache` still owns the physical
+data keys, TTL metadata and writes; the atomic read script reads the same hash
+layout (`HGET … data`) that the framework writes.
 
-Caller cancellation stops that caller's wait; it does not cancel shared work for every other waiter. The shared factory receives `CancellationToken.None` for that reason. Host shutdown cancellation remains the responsibility of the factory's own dependencies if needed.
+### Create an Upstash database
 
-`null` results are cached as a `CacheEntry` wrapper, so a cached null is distinguishable from a cache miss inside `GetOrCreateAsync`.
+1. Sign in at <https://console.upstash.com/> and choose **Create Database**.
+2. Select a region close to the API, enable **TLS**, and keep the default port
+   `6379`.
+3. Copy the connection string shown under **Connect → .NET** (or the `rediss://`
+   URL in the REST/CLI tab). Treat it as a password: it contains credentials.
+4. Put it in the repository root `.env` as `Redis__Configuration` (see below).
+   Never commit `.env` and never paste the value into issues, logs, or reports.
+
+### Local development configuration
+
+There is no User Secrets setup for Redis in this repository. The root `.env` is
+the single local source, loaded by `Program.cs` through `DotNetEnv` before the
+host is built:
+
+```dotenv
+Redis__Configuration=rediss://default:PASSWORD@HOST:6379
+Redis__InstanceName=ECommerce:
+```
+
+`rediss://` enables TLS. The plain `redis://` scheme and the classic
+`host:port,password=...,ssl=True` form are also accepted. Without a scheme the
+connection defaults to port `6379`, and `AbortOnConnectFail=false` is always set
+so a temporary outage cannot stop the API from starting.
+
+### Production configuration
+
+Inject `Redis__Configuration` (and optionally `Redis__InstanceName`) as
+environment variables from your secret store. Configuration can change without
+a rebuild. Startup validation checks that a value exists and is not a
+placeholder; the error names the key but never prints the value.
+
+### Cache keys and TTL
+
+Logical keys are built in `ProductCacheKeys` and include every parameter that
+changes the result: page number, page size, search, brand, type, min/max price,
+resolved sort field, resolved direction, and both legacy and new sort inputs.
+Tokens are trimmed, lowercased, and URL-escaped to avoid collisions.
+
+```text
+ECommerce:Products:Page:1:Size:10:Search:laptop:Brand:…:Type:…:MinPrice:…:MaxPrice:…:Sort:price:Order:asc:LegacySort:…:SortBy:…:SortOrder:…|g0
+ECommerce:Products:Id:99b1…|g0
+```
+
+`ECommerce:` is the `InstanceName` applied by `IDistributedCache`; `|g0` is the
+generation suffix applied by `RedisCacheService`. Expiration uses absolute Redis
+TTLs so a hot key cannot stay stale forever: 2 minutes for product listings,
+5 minutes for product details, 30 minutes for brands/types, and a 10-minute
+fallback when a caller does not specify one.
+
+### Invalidation
+
+Product writes call `RemoveByPrefixAsync(CacheScopes.Products)`, which performs a
+single atomic `INCR` on `ECommerce:gen:products`. Every product key is then read
+under the new generation, so all page/filter/sort/search combinations and all
+product-detail entries become unreachable at once. No `KEYS` or `SCAN` is used.
+Old entries remain in Redis until their TTL expires; this is the trade-off for
+O(1), race-safe invalidation. Each scope has its own counter, so brand/type
+caches are unaffected.
+
+The hit path uses one Lua `EVAL` round trip. The script reads the generation,
+validates that it contains only digits, appends it to the instance-name-prefixed
+data key, and reads the `data` hash field in the same Redis operation. A missing
+counter is treated as generation `0`. Because Redis executes scripts atomically,
+an `INCR` cannot interleave between the generation read and the value read; the
+result is linearizable at the moment the script runs. An invalidation that
+completes afterwards is seen by the next read. The post-lock check on a miss uses
+the same atomic read, so it still detects writes or invalidations that happen
+while callers queue.
+
+`CreateProductCommand` already uses this path; any future update/delete command
+should call the same method with `CacheScopes.Products`.
+
+### Failure handling and logging
+
+Redis is treated as an optimization. Read, write, remove, and generation errors
+are caught, logged as structured warnings with `Operation`, `CacheKey`, and
+`ErrorType` only, then degraded to a cache miss. The SQL query still runs and a
+cache outage does not fail an otherwise valid request. No connection string,
+password, stack trace, or internal exception message is exposed to clients or
+written to logs.
+
+Concurrent callers for the same key and generation share one process-local
+factory execution (single flight). Caller cancellation stops that caller's wait
+but does not cancel shared work needed by the other waiters; the factory and
+shared write intentionally receive `CancellationToken.None`. Per-request cache
+reads, writes, removals, invalidations and gate waits observe the caller's
+`CancellationToken`. Cached `null` results are wrapped in `CacheEnvelope<T>` so
+they are distinct from a miss.
+
+### Verify connectivity and inspect keys
+
+Do not paste the connection string into shell history. Prefer the Upstash
+Console (**Data** tab to browse keys and TTL; **CLI** tab to run commands) or a
+secret-aware shell variable:
+
+```powershell
+# PING without echoing the URL; TLS is implied by the rediss:// scheme.
+redis-cli -u $env:REDIS__CONFIGURATION PING
+
+# Inspect one key and its remaining TTL (keys are prefixed with ECommerce:).
+redis-cli -u $env:REDIS__CONFIGURATION TTL 'ECommerce:Products:Id:<guid>|g0'
+```
+
+Run these with the real value loaded in the process environment. The API health
+probes deliberately do **not** depend on Redis, because Redis is optional at
+runtime; a degraded cache still serves requests from SQL Server.
+
+### Testing
+
+Unit tests cover Redis reads/writes, TTL propagation, hit/miss behaviour, key
+generation, generation invalidation, different pagination keys, cancellation,
+single-flight cancellation, one-round-trip atomic reads, concurrent invalidation,
+fallback when `IDistributedCache`, the script or the generation counter fails,
+and singleton connection reuse. They use a fake `IDistributedCache` and a
+substituted `IConnectionMultiplexer`, so no Upstash account is needed. Integration
+tests replace `ICacheService` with a pass-through implementation and inject a
+dummy Redis configuration, so they never open a network connection.
 
 ## Product pagination
 

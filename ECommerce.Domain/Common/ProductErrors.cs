@@ -23,6 +23,9 @@ namespace ECommerce.Domain.Common
         public static readonly Error NegativePrice =
             Error.Validation("Product.NegativePrice", "Product price cannot be negative.");
 
+        public static readonly Error NegativeStock =
+            Error.Validation("Product.NegativeStock", "Product stock quantity cannot be negative.");
+
         public static readonly Error EmptyBrand =
             Error.Validation("Product.EmptyBrand", "Product brand is required.");
 

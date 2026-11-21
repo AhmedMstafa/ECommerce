@@ -50,6 +50,12 @@ public sealed class IntegrationTestFixture : IAsyncLifetime
 
     public Guid TypeId { get; private set; }
 
+    public Guid FirstProductId { get; private set; }
+
+    public Guid SecondProductId { get; private set; }
+
+    public Guid ThirdProductId { get; private set; }
+
     public async Task InitializeAsync()
     {
         _database = await SqlServerTestDatabase.CreateAsync();
@@ -89,9 +95,9 @@ public sealed class IntegrationTestFixture : IAsyncLifetime
 
         var products = new[]
         {
-            Product.Create("Alpha Product", "First seeded product", "https://images.test/alpha.png", 10m, brand.Id, type.Id).Value,
-            Product.Create("Beta Product", "Second seeded product", "https://images.test/beta.png", 20m, brand.Id, type.Id).Value,
-            Product.Create("Gamma Product", "Third seeded product", "https://images.test/gamma.png", 30m, brand.Id, type.Id).Value
+            Product.Create("Alpha Product", "First seeded product", "https://images.test/alpha.png", 10m, brand.Id, type.Id, stockQuantity: 25).Value,
+            Product.Create("Beta Product", "Second seeded product", "https://images.test/beta.png", 20m, brand.Id, type.Id, stockQuantity: 15).Value,
+            Product.Create("Gamma Product", "Third seeded product", "https://images.test/gamma.png", 30m, brand.Id, type.Id, stockQuantity: 5).Value
         };
 
         dbContext.Brands.Add(brand);
@@ -101,6 +107,9 @@ public sealed class IntegrationTestFixture : IAsyncLifetime
 
         BrandId = brand.Id;
         TypeId = type.Id;
+        FirstProductId = products[0].Id;
+        SecondProductId = products[1].Id;
+        ThirdProductId = products[2].Id;
     }
 
     private async Task SeedAdminAsync(IServiceProvider services)

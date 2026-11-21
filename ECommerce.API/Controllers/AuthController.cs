@@ -3,13 +3,16 @@ using System.Security.Claims;
 using Asp.Versioning;
 using ECommerce.API.Models;
 using ECommerce.Domain.Common;
+using ECommerce.Domain.Entities;
 using ECommerce.UseCases.Auth.Commands.ForgotPassword;
 using ECommerce.UseCases.Auth.Commands.GoogleLogin;
 using ECommerce.UseCases.Auth.Commands.LinkGoogleAccount;
 using ECommerce.UseCases.Auth.Commands.Login;
 using ECommerce.UseCases.Auth.Commands.Register;
 using ECommerce.UseCases.Auth.Commands.ResetPassword;
+using ECommerce.UseCases.Baskets.Commands.MergeBasket;
 using ECommerce.UseCases.Common.Auth;
+using ECommerce.UseCases.Common.Baskets;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -25,6 +28,8 @@ namespace ECommerce.API.Controllers;
 [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
 public class AuthController(ISender sender) : ApiControllerBase
 {
+    private const string GuestCookieName = "guest_basket_token";
+
     /// <summary>
     /// Registers a new user account.
     /// </summary>
@@ -37,6 +42,11 @@ public class AuthController(ISender sender) : ApiControllerBase
         CancellationToken cancellationToken = default)
     {
         var result = await sender.Send(command, cancellationToken);
+        if (result.IsSuccess)
+        {
+            await TryMergeGuestBasketAsync(result.Value.Token, cancellationToken);
+        }
+
         return FromResult(result);
     }
 
@@ -51,6 +61,11 @@ public class AuthController(ISender sender) : ApiControllerBase
         CancellationToken cancellationToken = default)
     {
         var result = await sender.Send(command, cancellationToken);
+        if (result.IsSuccess)
+        {
+            await TryMergeGuestBasketAsync(result.Value.Token, cancellationToken);
+        }
+
         return FromResult(result);
     }
 
@@ -104,6 +119,11 @@ public class AuthController(ISender sender) : ApiControllerBase
         CancellationToken cancellationToken = default)
     {
         var result = await sender.Send(command, cancellationToken);
+        if (result.IsSuccess)
+        {
+            await TryMergeGuestBasketAsync(result.Value.Token, cancellationToken);
+        }
+
         return FromResult(result);
     }
 
@@ -144,6 +164,73 @@ public class AuthController(ISender sender) : ApiControllerBase
         }
 
         return Ok(ApiResponse<string>.SuccessResponse("Google account linked successfully."));
+    }
+
+    private async Task TryMergeGuestBasketAsync(string token, CancellationToken cancellationToken)
+    {
+        var guestToken = ReadGuestToken();
+        if (string.IsNullOrWhiteSpace(guestToken) || !GuestToken.IsValid(guestToken))
+        {
+            return;
+        }
+
+        var jwt = new JwtSecurityTokenHandler().ReadJwtToken(token);
+        var userIdValue = jwt.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value
+                          ?? jwt.Claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Sub)?.Value;
+
+        if (!Guid.TryParse(userIdValue, out var userId))
+        {
+            return;
+        }
+
+        try
+        {
+            var merge = await sender.Send(
+                new MergeBasketCommand(BasketKey.ForUser(userId), guestToken),
+                cancellationToken);
+
+            // The guest cookie is cleared only after a successful merge so the
+            // explicit /basket/merge endpoint can retry if storage was unavailable.
+            if (merge.IsSuccess)
+            {
+                DeleteGuestCookie();
+            }
+        }
+        catch
+        {
+            // Authentication must not fail because the temporary basket store is
+            // unavailable. The guest token remains valid for an explicit retry.
+        }
+    }
+
+    private string? ReadGuestToken()
+    {
+        if (Request.Headers.TryGetValue(GuestToken.HeaderName, out var headerValue))
+        {
+            var headerToken = headerValue.ToString();
+            if (!string.IsNullOrWhiteSpace(headerToken))
+            {
+                return headerToken;
+            }
+        }
+
+        return Request.Cookies.TryGetValue(GuestCookieName, out var cookieToken)
+            ? cookieToken
+            : null;
+    }
+
+    private void DeleteGuestCookie()
+    {
+        if (Request.Cookies.ContainsKey(GuestCookieName))
+        {
+            Response.Cookies.Delete(GuestCookieName, new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = Request.IsHttps,
+                SameSite = SameSiteMode.Strict,
+                IsEssential = true
+            });
+        }
     }
 }
 

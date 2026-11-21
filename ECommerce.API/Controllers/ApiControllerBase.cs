@@ -1,6 +1,7 @@
 using Asp.Versioning;
 using ECommerce.API.Models;
 using ECommerce.Domain.Common;
+using ECommerce.UseCases.Common.Pagination;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ECommerce.API.Controllers;
@@ -10,10 +11,28 @@ namespace ECommerce.API.Controllers;
 [Route("api/v{version:apiVersion}/[controller]")]
 public class ApiControllerBase : ControllerBase
 {
+    /// <summary>
+    /// Correlates the response with the Serilog CorrelationId. The fallback keeps
+    /// controller unit tests working without a fully populated ControllerContext.
+    /// </summary>
+    protected string CurrentTraceId => HttpContext?.TraceIdentifier ?? string.Empty;
+
     protected ActionResult<ApiResponse<T>> FromResult<T>(Result<T> result)
+        => FromResult(result, value => ApiResponse<T>.SuccessResponse(
+            value,
+            meta: ApiMeta.For(CurrentTraceId)));
+
+    protected ActionResult<ApiResponse<IReadOnlyList<T>>> FromPagedResult<T>(Result<PagedResponse<T>> result)
+        => FromResult(result, page => ApiResponse<IReadOnlyList<T>>.SuccessResponse(
+            page.Items,
+            meta: ApiMeta.ForPage(CurrentTraceId, page)));
+
+    private ActionResult<ApiResponse<TResult>> FromResult<T, TResult>(
+        Result<T> result,
+        Func<T, ApiResponse<TResult>> onSuccess)
     {
-        return result.Match<ActionResult<ApiResponse<T>>>(
-            value => Ok(ApiResponse<T>.SuccessResponse(value)),
+        return result.Match<ActionResult<ApiResponse<TResult>>>(
+            value => Ok(onSuccess(value)),
             error => error.Type switch
             {
                 ErrorType.NotFound => NotFound(new ProblemDetails

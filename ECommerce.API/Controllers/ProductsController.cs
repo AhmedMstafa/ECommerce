@@ -1,6 +1,5 @@
 using Asp.Versioning;
 using ECommerce.API.Models;
-using ECommerce.UseCases.Common.Pagination;
 using ECommerce.UseCases.Products.Commands.CreateProduct;
 using ECommerce.UseCases.Products.Dtos;
 using ECommerce.UseCases.Products.Queries;
@@ -27,15 +26,15 @@ public class ProductsController(ISender sender) : ApiControllerBase
     /// <param name="cancellationToken">A token to cancel the request.</param>
     /// <returns>A page of products. Invalid pagination or sort values return 400.</returns>
     [HttpGet]
-    [ProducesResponseType(typeof(ApiResponse<PagedResponse<GetAllProductsResponse>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<IReadOnlyList<GetAllProductsResponse>>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(HttpValidationProblemDetails), StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<ApiResponse<PagedResponse<GetAllProductsResponse>>>> GetAll(
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<GetAllProductsResponse>>>> GetAll(
         [FromQuery] ProductSpecificationParameters? parameters,
         CancellationToken cancellationToken = default)
     {
         var result = await sender.Send(new GetAllProductsQuery(parameters), cancellationToken);
 
-        return FromResult(result);
+        return FromPagedResult(result);
     }
 
     /// <summary>
@@ -82,6 +81,9 @@ public class ProductsController(ISender sender) : ApiControllerBase
         return CreatedAtAction(
             nameof(GetById),
             new { id = result.Value },
-            ApiResponse<Guid>.SuccessResponse(result.Value, StatusCodes.Status201Created));
+            ApiResponse<Guid>.SuccessResponse(
+                result.Value,
+                StatusCodes.Status201Created,
+                meta: ApiMeta.For(CurrentTraceId)));
     }
 }
