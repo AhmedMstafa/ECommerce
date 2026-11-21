@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Threading.RateLimiting;
 using Asp.Versioning;
 using ECommerce.API.Configuration;
+using ECommerce.API.Filters;
 using ECommerce.API.Health;
 using ECommerce.API.Middlewares;
 using ECommerce.API.Swagger;
@@ -22,10 +23,14 @@ namespace ECommerce.API;
 public static class DependancyInjection
 {
     public static IServiceCollection AddPresentation(
-        this IServiceCollection services, 
+        this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.AddControllers();
+        services.AddScoped<ActionLoggingFilter>();
+        services.AddControllers(options =>
+        {
+            options.Filters.AddService<ActionLoggingFilter>();
+        });
         services.AddEndpointsApiExplorer();
         services.AddProblemDetails();
         services.AddExceptionHandler<GlobalExceptionMiddleware>();
@@ -82,31 +87,52 @@ public static class DependancyInjection
 
         // 3. Rate Limiting
         services.Configure<RateLimitingSettings>(configuration.GetSection("RateLimiting"));
-        var rateLimiting = configuration.GetSection("RateLimiting").Get<RateLimitingSettings>() ?? new();
 
         services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-            options.AddPolicy("fixed", context => RateLimitPartition.GetFixedWindowLimiter(
-                GetRateLimitPartitionKey(context),
-                _ => new FixedWindowRateLimiterOptions
-                {
-                    PermitLimit = Math.Max(1, rateLimiting.Fixed.PermitLimit),
-                    Window = TimeSpan.FromSeconds(Math.Max(1, rateLimiting.Fixed.WindowSeconds)),
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                    QueueLimit = Math.Max(0, rateLimiting.Fixed.QueueLimit)
-                }));
+            options.AddPolicy("fixed", context =>
+            {
+                var settings = GetRateLimitingSettings(context);
+                return RateLimitPartition.GetFixedWindowLimiter(
+                    GetRateLimitPartitionKey(context),
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = Math.Max(1, settings.Fixed.PermitLimit),
+                        Window = TimeSpan.FromSeconds(Math.Max(1, settings.Fixed.WindowSeconds)),
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = Math.Max(0, settings.Fixed.QueueLimit)
+                    });
+            });
 
-            options.AddPolicy("auth-policy", context => RateLimitPartition.GetFixedWindowLimiter(
-                GetRateLimitPartitionKey(context),
-                _ => new FixedWindowRateLimiterOptions
-                {
-                    PermitLimit = Math.Max(1, rateLimiting.Auth.PermitLimit),
-                    Window = TimeSpan.FromSeconds(Math.Max(1, rateLimiting.Auth.WindowSeconds)),
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                    QueueLimit = Math.Max(0, rateLimiting.Auth.QueueLimit)
-                }));
+            options.AddPolicy("auth-policy", context =>
+            {
+                var settings = GetRateLimitingSettings(context);
+                return RateLimitPartition.GetFixedWindowLimiter(
+                    GetRateLimitPartitionKey(context),
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = Math.Max(1, settings.Auth.PermitLimit),
+                        Window = TimeSpan.FromSeconds(Math.Max(1, settings.Auth.WindowSeconds)),
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = Math.Max(0, settings.Auth.QueueLimit)
+                    });
+            });
+
+            options.AddPolicy("basket-policy", context =>
+            {
+                var settings = GetRateLimitingSettings(context);
+                return RateLimitPartition.GetFixedWindowLimiter(
+                    GetBasketRateLimitPartitionKey(context),
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = Math.Max(1, settings.Basket.PermitLimit),
+                        Window = TimeSpan.FromSeconds(Math.Max(1, settings.Basket.WindowSeconds)),
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = Math.Max(0, settings.Basket.QueueLimit)
+                    });
+            });
 
             options.OnRejected = async (context, token) =>
             {
@@ -160,4 +186,36 @@ public static class DependancyInjection
                context.Connection.RemoteIpAddress?.ToString() ??
                "anonymous";
     }
+
+    private static string GetBasketRateLimitPartitionKey(HttpContext context)
+    {
+        var userId = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? context.User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value;
+        if (!string.IsNullOrWhiteSpace(userId))
+        {
+            return $"basket:user:{userId}";
+        }
+
+        // For unauthenticated guests, prefer a derived key from the guest token
+        // so limits are not shared across all guests behind the same IP. The raw
+        // token is never trusted as identity; only a hash of a syntactically
+        // valid token is used. If absent/invalid, fall back to client IP.
+        var guestToken = context.Request.Headers["X-Guest-Token"].ToString();
+        if (string.IsNullOrWhiteSpace(guestToken))
+        {
+            guestToken = context.Request.Cookies["guest_basket_token"];
+        }
+
+        if (ECommerce.UseCases.Common.Baskets.GuestToken.IsValid(guestToken))
+        {
+            return $"basket:guest:{ECommerce.UseCases.Common.Baskets.GuestToken.Hash(guestToken!)}";
+        }
+
+        return $"basket:ip:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+    }
+
+    private static RateLimitingSettings GetRateLimitingSettings(HttpContext context) =>
+        context.RequestServices.GetRequiredService<IConfiguration>()
+            .GetSection("RateLimiting")
+            .Get<RateLimitingSettings>() ?? new();
 }

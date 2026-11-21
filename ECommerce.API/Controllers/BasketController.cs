@@ -16,6 +16,7 @@ using ECommerce.UseCases.Common.Baskets;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ECommerce.API.Controllers;
 
@@ -24,6 +25,8 @@ namespace ECommerce.API.Controllers;
 /// authenticated users. Responses always reflect current product data from SQL.
 /// </summary>
 [ApiVersion("1.0")]
+[EnableRateLimiting("basket-policy")]
+[ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
 public class BasketController(ISender sender) : ApiControllerBase
 {
     private const string GuestCookieName = "guest_basket_token";

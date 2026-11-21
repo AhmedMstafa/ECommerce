@@ -1,8 +1,8 @@
 namespace ECommerce.API.Configuration;
 
 /// <summary>
-/// Configuration for the two in-memory rate-limit policies. Limits are applied
-/// per client key (authenticated user name, otherwise remote IP address).
+/// Configuration for in-memory rate-limit policies. Limits are applied per
+/// partition key (authenticated identity or a safe guest/client key).
 /// </summary>
 public sealed class RateLimitingSettings
 {
@@ -16,6 +16,17 @@ public sealed class RateLimitingSettings
     public RateLimitPolicySettings Auth { get; set; } = new()
     {
         PermitLimit = 5,
+        WindowSeconds = 60,
+        QueueLimit = 0
+    };
+
+    /// <summary>
+    /// Protects temporary basket operations. Partitioned by authenticated user
+    /// identity when available, otherwise by a safe guest/client key.
+    /// </summary>
+    public RateLimitPolicySettings Basket { get; set; } = new()
+    {
+        PermitLimit = 60,
         WindowSeconds = 60,
         QueueLimit = 0
     };

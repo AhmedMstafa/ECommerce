@@ -13,7 +13,10 @@ public sealed class BasketService(
     IOptions<BasketSettings> options,
     TimeProvider clock) : IBasketService
 {
-    private const int MaximumSaveAttempts = 3;
+    // Generous enough to absorb short bursts of concurrent optimistic writes
+    // (e.g. parallel add-item requests) while keeping mutation retries bounded.
+    private const int MaximumSaveAttempts = 10;
+    private const int MaximumExpiryRecoveryAttempts = 3;
 
     private const string StatusAvailable = "Available";
     private const string StatusOutOfStock = "OutOfStock";
@@ -91,10 +94,16 @@ public sealed class BasketService(
         {
             return await MutateAsync(
                 key,
-                (basket, now, _) => Task.FromResult<Result<MutationOutcome>>(
-                    basket.Remove(productId, now)
-                        ? MutationOutcome.Changed
-                        : MutationOutcome.Unchanged),
+                (basket, now, _) =>
+                {
+                    var removeResult = basket.Remove(productId, now);
+                    if (removeResult.IsFailure)
+                    {
+                        return Task.FromResult<Result<MutationOutcome>>(removeResult.Error!);
+                    }
+
+                    return Task.FromResult<Result<MutationOutcome>>(MutationOutcome.Changed);
+                },
                 ct);
         }
         catch (BasketStorageException)
@@ -138,8 +147,8 @@ public sealed class BasketService(
                         return QuantityFailure(product, productId, _settings.MaximumQuantityPerProduct);
                     }
 
-                    basket.SetQuantity(productId, quantity, product.Price, now);
-                    return MutationOutcome.Changed;
+                    var setResult = basket.SetQuantity(productId, quantity, product.Price, now);
+                    return setResult.IsFailure ? setResult.Error! : MutationOutcome.Changed;
                 },
                 ct);
         }
@@ -191,82 +200,228 @@ public sealed class BasketService(
             }
 
             var guestTokenHash = GuestToken.Hash(guestToken);
-            var now = Now;
-            var userBasket = await LoadAsync(userKey, ct) ?? CreateBasket(userKey, now);
-
-            // A retry after a successful merge must never add the guest items twice.
-            if (userBasket.HasMergedGuest(guestTokenHash))
-            {
-                return Result.Success(await BuildResponseAsync(userBasket, ct));
-            }
-
             var guestKey = BasketKey.ForGuest(guestTokenHash);
-            var guestBasket = await LoadAsync(guestKey, ct);
-            if (guestBasket is null || guestBasket.Items.Count == 0)
-            {
-                // Preserve the authenticated basket exactly as it is.
-                return Result.Success(await BuildResponseAsync(userBasket, ct));
-            }
+            Basket? lastMergedSnapshot = null;
 
-            var productIds = guestBasket.Items.Select(item => item.ProductId).Distinct().ToArray();
-            var products = await productRepository.GetAllWithSpecAsync(
-                new ProductsByIdsSpecification(productIds),
-                ct);
-            var productById = products.ToDictionary(product => product.Id);
-
-            var changed = false;
-            foreach (var item in guestBasket.Items)
+            for (var attempt = 0; attempt < MaximumSaveAttempts; attempt++)
             {
-                if (!productById.TryGetValue(item.ProductId, out var product))
+                ct.ThrowIfCancellationRequested();
+
+                var userBasket = await LoadAsync(userKey, ct) ?? CreateBasket(userKey, Now);
+                var guestBasket = await LoadAsync(guestKey, ct);
+
+                if (guestBasket is null || guestBasket.Items.Count == 0)
                 {
-                    // Deleted or otherwise unavailable products are not migrated.
-                    continue;
+                    // Nothing left to merge; preserve authenticated basket.
+                    return Result.Success(await BuildResponseAsync(userBasket, ct));
                 }
 
-                var limit = Math.Min(_settings.MaximumQuantityPerProduct, product.StockQuantity);
-                var userQuantity = FindItem(userBasket, item.ProductId)?.Quantity ?? 0;
-                var room = limit - userQuantity;
-                if (room <= 0)
+                // This exact guest revision was already applied; complete cleanup.
+                if (userBasket.HasMergedGuestRevision(guestTokenHash, guestBasket.Revision))
                 {
-                    continue;
+                    try
+                    {
+                        await store.DeleteAsync(guestKey, guestBasket.Revision, ct);
+                    }
+                    catch (BasketStorageException)
+                    {
+                        // Best-effort completion after a previously persisted merge.
+                    }
+
+                    return Result.Success(await BuildResponseAsync(userBasket, ct));
                 }
 
-                var quantity = Math.Min(item.Quantity, room);
-                userBasket.AddOrIncrease(item.ProductId, quantity, product.Price, now);
-                changed = true;
+                // Legacy marker (hash-only, from older persisted state): treat as
+                // already merged to avoid duplicate quantities. Best-effort cleanup.
+                if (userBasket.HasMergedGuest(guestTokenHash) &&
+                    !userBasket.HasMergedGuestRevision(guestTokenHash, guestBasket.Revision))
+                {
+                    try
+                    {
+                        await store.DeleteAsync(guestKey, guestBasket.Revision, ct);
+                    }
+                    catch (BasketStorageException)
+                    {
+                    }
+
+                    return Result.Success(await BuildResponseAsync(userBasket, ct));
+                }
+
+                var mergeSource = guestBasket;
+                if (lastMergedSnapshot is not null && guestBasket.Revision != lastMergedSnapshot.Revision)
+                {
+                    // Guest changed after a revision we already applied to the user
+                    // basket but failed to consume/delete. Merge only additive deltas
+                    // relative to that applied snapshot to avoid losing newer updates
+                    // without duplicating previously merged quantities.
+                    mergeSource = ComputeAdditiveDelta(lastMergedSnapshot, guestBasket);
+                    if (mergeSource.Items.Count == 0)
+                    {
+                        // No additive updates to apply; try to consume current revision.
+                        try
+                        {
+                            var deleted = await store.DeleteAsync(guestKey, guestBasket.Revision, ct);
+                            if (deleted)
+                            {
+                                userBasket.MarkGuestMergedRevision(guestTokenHash, guestBasket.Revision, Now);
+                                var save = await store.SaveAsync(userBasket, _settings.SlidingExpiration(BasketKind.User), ct);
+                                if (save.Outcome == BasketSaveOutcome.Conflict)
+                                {
+                                    continue;
+                                }
+
+                                if (save.Outcome == BasketSaveOutcome.Failed)
+                                {
+                                    return StorageFailure();
+                                }
+
+                                return Result.Success(await BuildResponseAsync(userBasket, ct));
+                            }
+                        }
+                        catch (BasketStorageException)
+                        {
+                        }
+
+                        lastMergedSnapshot = guestBasket;
+                        continue;
+                    }
+                }
+
+                var mergeResult = await MergeGuestIntoUserAsync(userBasket, mergeSource, guestTokenHash, guestBasket.Revision, ct);
+                if (mergeResult.IsFailure)
+                {
+                    return Result.Failure<BasketResponse>(mergeResult.Error!);
+                }
+
+                var persisted = mergeResult.Value;
+                if (persisted is null)
+                {
+                    // No effective changes from this merge source; nothing to persist.
+                    return Result.Success(await BuildResponseAsync(userBasket, ct));
+                }
+
+                // Attempt to consume exactly the guest revision we observed/merged.
+                bool guestDeleted;
+                try
+                {
+                    guestDeleted = await store.DeleteAsync(guestKey, guestBasket.Revision, ct);
+                }
+                catch (BasketStorageException)
+                {
+                    // User basket merge (including revision marker) is already
+                    // persisted. Cleanup is best-effort; retries can complete it.
+                    return Result.Success(await BuildResponseAsync(persisted, ct));
+                }
+
+                if (guestDeleted)
+                {
+                    return Result.Success(await BuildResponseAsync(persisted, ct));
+                }
+
+                // CAS conflict: guest changed since we read it. The persisted merge
+                // covered only guestBasket.Revision (or its delta basis), so loop to
+                // incorporate any newer additive updates without deleting unmerged state.
+                lastMergedSnapshot = guestBasket;
             }
 
-            if (!changed)
-            {
-                return Result.Success(await BuildResponseAsync(userBasket, ct));
-            }
-
-            userBasket.MarkGuestMerged(guestTokenHash, now);
-            var save = await store.SaveAsync(
-                userBasket,
-                _settings.SlidingExpiration(BasketKind.User),
-                ct);
-
-            if (save.Outcome == BasketSaveOutcome.Failed)
-            {
-                return StorageFailure();
-            }
-
-            if (save.Outcome == BasketSaveOutcome.Conflict)
-            {
-                return Result.Failure<BasketResponse>(BasketErrors.ConcurrentUpdate);
-            }
-
-            // The guest basket is removed only after the user basket was saved.
-            // If this delete fails, the marker keeps a retry idempotent.
-            await store.DeleteAsync(guestKey, guestBasket.Revision, ct);
-
-            return Result.Success(await BuildResponseAsync(userBasket, ct));
+            return Result.Failure<BasketResponse>(BasketErrors.ConcurrentUpdate);
         }
         catch (BasketStorageException)
         {
             return StorageFailure();
         }
+    }
+
+    private async Task<Result<Basket?>> MergeGuestIntoUserAsync(
+        Basket userBasket,
+        Basket mergeSource,
+        string guestTokenHash,
+        long consumedGuestRevision,
+        CancellationToken ct)
+    {
+        var now = Now;
+        var productIds = mergeSource.Items.Select(item => item.ProductId).Distinct().ToArray();
+        if (productIds.Length == 0)
+        {
+            return Result.Success<Basket?>(null);
+        }
+
+        var products = await productRepository.GetAllWithSpecAsync(
+            new ProductsByIdsSpecification(productIds),
+            ct);
+        var productById = products.ToDictionary(product => product.Id);
+
+        var changed = false;
+        foreach (var item in mergeSource.Items)
+        {
+            if (!productById.TryGetValue(item.ProductId, out var product))
+            {
+                // Deleted or otherwise unavailable products are not migrated.
+                continue;
+            }
+
+            var limit = Math.Min(_settings.MaximumQuantityPerProduct, product.StockQuantity);
+            var userQuantity = FindItem(userBasket, item.ProductId)?.Quantity ?? 0;
+            var room = limit - userQuantity;
+            if (room <= 0)
+            {
+                continue;
+            }
+
+            var quantity = Math.Min(item.Quantity, room);
+            var addResult = userBasket.AddOrIncrease(item.ProductId, quantity, product.Price, now);
+            if (addResult.IsFailure)
+            {
+                return Result.Failure<Basket?>(addResult.Error!);
+            }
+
+            changed = true;
+        }
+
+        if (!changed)
+        {
+            return Result.Success<Basket?>(null);
+        }
+
+        userBasket.MarkGuestMergedRevision(guestTokenHash, consumedGuestRevision, now);
+        var save = await store.SaveAsync(
+            userBasket,
+            _settings.SlidingExpiration(BasketKind.User),
+            ct);
+
+        if (save.Outcome == BasketSaveOutcome.Failed)
+        {
+            return Result.Failure<Basket?>(BasketErrors.StorageUnavailable);
+        }
+
+        if (save.Outcome == BasketSaveOutcome.Conflict)
+        {
+            return Result.Failure<Basket?>(BasketErrors.ConcurrentUpdate);
+        }
+
+        return Result.Success<Basket?>(userBasket);
+    }
+
+    private static Basket ComputeAdditiveDelta(Basket appliedSnapshot, Basket currentGuest)
+    {
+        var delta = Basket.CreateGuest(appliedSnapshot.GuestTokenHash ?? string.Empty, currentGuest.UpdatedAt);
+        foreach (var item in currentGuest.Items)
+        {
+            var appliedQuantity = appliedSnapshot.Items.FirstOrDefault(i => i.ProductId == item.ProductId)?.Quantity ?? 0;
+            var additional = item.Quantity - appliedQuantity;
+            if (additional > 0)
+            {
+                delta.AddOrIncrease(item.ProductId, additional, item.PriceAtAdd, currentGuest.UpdatedAt);
+            }
+            else if (appliedQuantity == 0)
+            {
+                // New product not in applied snapshot.
+                delta.AddOrIncrease(item.ProductId, item.Quantity, item.PriceAtAdd, currentGuest.UpdatedAt);
+            }
+        }
+
+        // Rehydrate revision to 0/empty state is fine; delta is never persisted.
+        return delta;
     }
 
     private async Task<Result<BasketResponse>> MutateAsync(
@@ -309,16 +464,59 @@ public sealed class BasketService(
 
     private async Task<Basket?> LoadAsync(BasketKey key, CancellationToken ct)
     {
-        var basket = await store.GetAsync(key, ct);
-        if (basket is null || Now - basket.CreatedAt < _settings.MaximumLifetime)
+        var current = await store.GetAsync(key, ct);
+        if (current is null)
         {
-            return basket;
+            return null;
         }
 
-        // Absolute lifetime reached: start from a fresh basket instead of
-        // keeping old state alive through sliding activity.
-        return null;
+        if (!IsExpired(current))
+        {
+            return current;
+        }
+
+        for (var attempt = 0; attempt < MaximumExpiryRecoveryAttempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var expired = current;
+
+            var deleted = await store.DeleteAsync(key, expired.Revision, ct);
+
+            current = await store.GetAsync(key, ct);
+            if (current is null)
+            {
+                return null;
+            }
+
+            if (!IsExpired(current))
+            {
+                return current;
+            }
+
+            if (current.Revision != expired.Revision)
+            {
+                // A concurrent writer produced a newer revision that is still
+                // expired under the hard absolute-lifetime rule. Retry recovery
+                // against this exact observed revision.
+                continue;
+            }
+
+            // The same expired revision is still present after a revision-aware
+            // delete attempt. This is contradictory/unprogressable: CAS conflict
+            // with an unchanged revision, or a reported delete without authoritative
+            // removal. Do not return expired contents or create an ExpectedRevision=-1
+            // insert while the key still exists.
+            _ = deleted;
+            throw new BasketStorageException(
+                "Failed to recover an expired basket because its stored revision could not be removed safely.");
+        }
+
+        throw new BasketStorageException(
+            "Failed to recover an expired basket within the bounded recovery attempts.");
     }
+
+    private bool IsExpired(Basket basket) =>
+        Now - basket.CreatedAt >= _settings.MaximumLifetime;
 
     private Basket CreateBasket(BasketKey key, DateTime now) => key.Kind == BasketKind.User
         ? Basket.CreateUser(Guid.Parse(key.Identifier), now)

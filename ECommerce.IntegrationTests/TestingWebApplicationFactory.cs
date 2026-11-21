@@ -34,6 +34,7 @@ public sealed class TestingWebApplicationFactory : WebApplicationFactory<Program
             ["ClientApp__BaseUrl"] = "https://client.example.com",
             ["RateLimiting__Fixed__PermitLimit"] = "10000",
             ["RateLimiting__Auth__PermitLimit"] = "10000",
+            ["RateLimiting__Basket__PermitLimit"] = "10000",
             // AddInfrastructure validates Redis settings at startup. A dummy,
             // parseable value is enough because the cache is replaced below.
             ["Redis__Configuration"] = "localhost:6379,abortConnect=false",

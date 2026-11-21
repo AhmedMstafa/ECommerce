@@ -30,7 +30,7 @@ namespace ECommerce.Infrastructure;
 public static class DependancyInjection
 {
     public static IServiceCollection AddInfrastructure(
-        this IServiceCollection services, 
+        this IServiceCollection services,
         IConfiguration configuration,
         bool isDevelopment = false)
     {
@@ -154,6 +154,9 @@ public static class DependancyInjection
             () => ConnectionMultiplexer.Connect(redisOptions));
         services.AddSingleton<IConnectionMultiplexer>(_ => multiplexer.Value);
 
+        services.AddOptions<CacheSettings>()
+            .Bind(configuration.GetSection(CacheSettings.SectionName));
+
         services.AddStackExchangeRedisCache(options =>
         {
             options.ConfigurationOptions = redisOptions;
@@ -161,7 +164,17 @@ public static class DependancyInjection
             options.ConnectionMultiplexerFactory = () => Task.FromResult(multiplexer.Value);
         });
 
-        services.AddSingleton<ICacheService, RedisCacheService>();
+        services.AddHybridCache(options =>
+        {
+            var cacheSettings = configuration.GetSection(CacheSettings.SectionName).Get<CacheSettings>() ?? new();
+            options.DefaultEntryOptions = new Microsoft.Extensions.Caching.Hybrid.HybridCacheEntryOptions
+            {
+                Expiration = cacheSettings.DistributedCacheExpiration,
+                LocalCacheExpiration = cacheSettings.LocalCacheExpiration
+            };
+        });
+
+        services.AddSingleton<ICacheService, HybridCacheService>();
 
         // 5b. Basket storage - Redis documents via the shared multiplexer.
         services.Configure<BasketSettings>(configuration.GetSection(BasketSettings.SectionName));

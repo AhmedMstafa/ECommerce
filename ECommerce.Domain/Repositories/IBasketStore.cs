@@ -17,8 +17,11 @@ namespace ECommerce.Domain.Repositories
         Task<BasketSaveResult> SaveAsync(Basket basket, TimeSpan ttl, CancellationToken ct = default);
 
         /// <summary>
-        /// Deletes the basket only when its revision still matches, so a guest
-        /// basket changed during a merge is never silently discarded.
+        /// Deletes the basket only when its revision still matches, so a basket
+        /// changed concurrently is never silently discarded. Returns <c>true</c> when
+        /// the key was deleted or is already absent, and <c>false</c> on a revision
+        /// (CAS) conflict. Storage/infrastructure failures must throw
+        /// <see cref="BasketStorageException"/>; cancellation must be propagated.
         /// </summary>
         Task<bool> DeleteAsync(BasketKey key, long expectedRevision, CancellationToken ct = default);
     }

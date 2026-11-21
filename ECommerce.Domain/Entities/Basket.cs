@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using ECommerce.Domain.Common;
 
 namespace ECommerce.Domain.Entities
 {
@@ -93,7 +94,7 @@ namespace ECommerce.Domain.Entities
             return basket;
         }
 
-        public void AddOrIncrease(
+        public Result AddOrIncrease(
             Guid productId,
             int quantity,
             decimal? priceAtAdd,
@@ -102,32 +103,43 @@ namespace ECommerce.Domain.Entities
             var existing = Find(productId);
             if (existing is null)
             {
-                _items.Add(BasketItem.Create(productId, quantity, priceAtAdd, utcNow));
+                var itemResult = BasketItem.Create(productId, quantity, priceAtAdd, utcNow);
+                if (itemResult.IsFailure)
+                {
+                    return Result.Failure(itemResult.Error!);
+                }
+
+                _items.Add(itemResult.Value);
             }
             else
             {
                 // Keep the first snapshot so a later price change is visible
                 // instead of being silently overwritten by a repeated add.
-                existing.IncreaseQuantity(quantity);
+                var increaseResult = existing.IncreaseQuantity(quantity);
+                if (increaseResult.IsFailure)
+                {
+                    return increaseResult;
+                }
             }
 
             Touch(utcNow);
+            return Result.Success();
         }
 
-        public bool Remove(Guid productId, DateTime utcNow)
+        public Result Remove(Guid productId, DateTime utcNow)
         {
             var existing = Find(productId);
             if (existing is null)
             {
-                return false;
+                return BasketErrors.ItemNotFound(productId);
             }
 
             _items.Remove(existing);
             Touch(utcNow);
-            return true;
+            return Result.Success();
         }
 
-        public bool SetQuantity(
+        public Result SetQuantity(
             Guid productId,
             int quantity,
             decimal? priceAtAdd,
@@ -136,14 +148,19 @@ namespace ECommerce.Domain.Entities
             var existing = Find(productId);
             if (existing is null)
             {
-                return false;
+                return BasketErrors.ItemNotFound(productId);
             }
 
-            existing.SetQuantity(quantity);
+            var quantityResult = existing.SetQuantity(quantity);
+            if (quantityResult.IsFailure)
+            {
+                return quantityResult;
+            }
+
             existing.SetPriceAtAddIfMissing(priceAtAdd);
 
             Touch(utcNow);
-            return true;
+            return Result.Success();
         }
 
         public void Clear(DateTime utcNow)
@@ -158,16 +175,23 @@ namespace ECommerce.Domain.Entities
         }
 
         public bool HasMergedGuest(string guestTokenHash) =>
-            _mergedGuestTokenHashes.Contains(guestTokenHash, StringComparer.Ordinal);
+            _mergedGuestTokenHashes.Any(marker => MarkerMatchesHash(marker, guestTokenHash));
 
-        public void MarkGuestMerged(string guestTokenHash, DateTime utcNow)
+        public bool HasMergedGuestRevision(string guestTokenHash, long revision) =>
+            _mergedGuestTokenHashes.Contains(MarkerFor(guestTokenHash, revision), StringComparer.Ordinal);
+
+        public void MarkGuestMerged(string guestTokenHash, DateTime utcNow) =>
+            MarkGuestMergedRevision(guestTokenHash, 0, utcNow);
+
+        public void MarkGuestMergedRevision(string guestTokenHash, long revision, DateTime utcNow)
         {
-            if (HasMergedGuest(guestTokenHash))
+            var marker = MarkerFor(guestTokenHash, revision);
+            if (_mergedGuestTokenHashes.Contains(marker, StringComparer.Ordinal))
             {
                 return;
             }
 
-            _mergedGuestTokenHashes.Add(guestTokenHash);
+            _mergedGuestTokenHashes.Add(marker);
 
             while (_mergedGuestTokenHashes.Count > MaximumMergedMarkers)
             {
@@ -176,6 +200,13 @@ namespace ECommerce.Domain.Entities
 
             Touch(utcNow);
         }
+
+        public static string MarkerFor(string guestTokenHash, long revision) =>
+            string.Concat(guestTokenHash, ":", revision.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        private static bool MarkerMatchesHash(string marker, string guestTokenHash) =>
+            string.Equals(marker, guestTokenHash, StringComparison.Ordinal) ||
+            marker.StartsWith(guestTokenHash + ":", StringComparison.Ordinal);
 
         public void Touch(DateTime utcNow)
         {

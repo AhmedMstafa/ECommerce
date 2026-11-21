@@ -9,8 +9,10 @@ using ECommerce.Infrastructure.Persistence;
 using ECommerce.UseCases.Baskets.Dtos;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -290,6 +292,7 @@ public sealed class BasketIntegrationTests(IntegrationTestFixture fixture)
     {
         using var client = CreateClient();
         var seed = await client.GetAsync("/api/v1/basket");
+        seed.StatusCode.Should().Be(HttpStatusCode.OK);
         var token = seed.Headers.GetValues("X-Guest-Token").Single();
 
         var tasks = Enumerable.Range(0, 8).Select(i =>
@@ -299,7 +302,8 @@ public sealed class BasketIntegrationTests(IntegrationTestFixture fixture)
                 quantity = 1
             }, token));
 
-        await Task.WhenAll(tasks);
+        var responses = await Task.WhenAll(tasks);
+        responses.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.OK);
 
         var body = await (await GetAsync(client, "/api/v1/basket", token)).Content
             .ReadFromJsonAsync<TestApiResponse<BasketResponse>>();
@@ -327,6 +331,81 @@ public sealed class BasketIntegrationTests(IntegrationTestFixture fixture)
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         document.RootElement.GetProperty("title").GetString().Should().Be("Server Error");
         document.RootElement.GetProperty("detail").GetString().Should().Contain("temporarily unavailable");
+    }
+
+    [Fact]
+    public async Task GuestRequests_ShouldBeRateLimited_PerGuest()
+    {
+        await using var factory = fixture.Factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureAppConfiguration((_, config) =>
+            {
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["RateLimiting:Basket:PermitLimit"] = "2",
+                    ["RateLimiting:Basket:WindowSeconds"] = "60",
+                    ["RateLimiting:Basket:QueueLimit"] = "0"
+                });
+            });
+        });
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+            HandleCookies = false
+        });
+
+        // First request establishes the guest token (partitioned as an unknown
+        // guest/IP until the token exists). Subsequent requests with the token
+        // are limited per guest identity.
+        var establish = await client.GetAsync("/api/v1/basket");
+        establish.StatusCode.Should().Be(HttpStatusCode.OK);
+        var token = establish.Headers.GetValues("X-Guest-Token").Single();
+
+        var firstWithToken = await GetAsync(client, "/api/v1/basket", token);
+        firstWithToken.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var secondWithToken = await GetAsync(client, "/api/v1/basket", token);
+        secondWithToken.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var thirdWithToken = await GetAsync(client, "/api/v1/basket", token);
+        thirdWithToken.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+
+        var problem = await thirdWithToken.Content.ReadFromJsonAsync<ProblemDetails>();
+        problem!.Status.Should().Be(StatusCodes.Status429TooManyRequests);
+        problem.Title.Should().Be("Too Many Requests");
+    }
+
+    [Fact]
+    public async Task AuthenticatedRequests_ShouldBeRateLimited_PerUser()
+    {
+        await using var factory = fixture.Factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureAppConfiguration((_, config) =>
+            {
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["RateLimiting:Basket:PermitLimit"] = "2",
+                    ["RateLimiting:Basket:WindowSeconds"] = "60",
+                    ["RateLimiting:Basket:QueueLimit"] = "0"
+                });
+            });
+        });
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+            HandleCookies = false
+        });
+
+        var first = await GetAsync(client, "/api/v1/basket", authToken: fixture.AdminToken);
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var second = await GetAsync(client, "/api/v1/basket", authToken: fixture.AdminToken);
+        second.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var third = await GetAsync(client, "/api/v1/basket", authToken: fixture.AdminToken);
+        third.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
     }
 
     private HttpClient CreateClient() => fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions

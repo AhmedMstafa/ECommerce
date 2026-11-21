@@ -1,12 +1,16 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Text.Json;
 using ECommerce.Infrastructure.Caching;
 using ECommerce.UseCases.Common.Caching;
 using ECommerce.UseCases.Products.Caching;
 using ECommerce.UseCases.Products.Specifications;
 using FluentAssertions;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Caching.StackExchangeRedis;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -15,494 +19,401 @@ using StackExchange.Redis;
 namespace ECommerce.UnitTests;
 
 /// <summary>
-/// Redis cache behaviour is exercised through IDistributedCache and a stubbed
-/// IConnectionMultiplexer, so no Upstash account or local Redis is required.
-/// The stub models the Lua read script against the same generation keys and
-/// hash field layout used by the real implementation.
+/// Behavioral tests for the HybridCache-backed application cache service.
+/// Redis/network access is avoided by using in-memory and stubbed dependencies.
 /// </summary>
 public class CacheServiceTests
 {
     [Fact]
-    public async Task GetAsync_ShouldResolveGenerationSpecificKeyInOneRedisOperation()
+    public async Task GetOrCreateAsync_ShouldLoadOnceOnCacheMiss_AndServeFromL1CacheHit()
     {
-        var (service, cache, _, redis) = CreateService();
-        await service.SetAsync("products:1", "value");
-        cache.GetCalls.Should().Be(0);
-        redis.ScriptCalls = 0;
-
-        (await service.GetAsync<string>("products:1")).Should().Be("value");
-
-        redis.ScriptCalls.Should().Be(1);
-        cache.GetCalls.Should().Be(0);
-    }
-
-    [Fact]
-    public async Task GetAsync_ShouldHonourCurrentGeneration_AfterInvalidation()
-    {
-        var (service, _, _, redis) = CreateService();
-        await service.SetAsync("products:1", "stale");
-        redis.ScriptCalls = 0;
-
-        await service.RemoveByPrefixAsync(CacheScopes.Products);
-
-        (await service.GetAsync<string>("products:1")).Should().BeNull();
-        redis.ScriptCalls.Should().Be(1);
-    }
-
-    [Fact]
-    public async Task GetOrCreateAsync_ShouldLoadOnceUnderConcurrency()
-    {
-        var (service, cache, _, _) = CreateService();
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var factoryCalls = 0;
-
-        Task<string> Factory(CancellationToken _)
-        {
-            Interlocked.Increment(ref factoryCalls);
-            started.TrySetResult();
-            return WaitForAsync(release.Task, "value");
-        }
-
-        var first = service.GetOrCreateAsync("key", Factory);
-        await started.Task;
-
-        var concurrent = Enumerable.Range(0, 9)
-            .Select(_ => service.GetOrCreateAsync("key", Factory))
-            .ToArray();
-
-        // Give all callers a chance to join the existing flight before releasing.
-        await Task.Delay(100);
-        release.SetResult();
-
-        var values = await Task.WhenAll(concurrent.Prepend(first));
-
-        values.Should().AllBe("value");
-        factoryCalls.Should().Be(1);
-        (await service.GetAsync<string>("key")).Should().Be("value");
-        cache.Entries.Should().HaveCount(1);
-    }
-
-    [Fact]
-    public async Task GetOrCreateAsync_ShouldAllowOneCallerToCancelWithoutCancellingSharedWork()
-    {
-        var (service, _, _, _) = CreateService();
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var factoryCalls = 0;
-        var factoryToken = CancellationToken.None;
-
-        async Task<string> Factory(CancellationToken token)
-        {
-            Interlocked.Increment(ref factoryCalls);
-            factoryToken = token;
-            started.SetResult();
-            await release.Task;
-            return "value";
-        }
-
-        var first = service.GetOrCreateAsync("key", Factory);
-        await started.Task;
-
-        using var cancelled = new CancellationTokenSource();
-        var second = service.GetOrCreateAsync("key", Factory, ct: cancelled.Token);
-        await Task.Delay(100);
-        cancelled.Cancel();
-        release.SetResult();
-
-        await second.Invoking(_ => second)
-            .Should().ThrowAsync<OperationCanceledException>();
-        (await first).Should().Be("value");
-
-        factoryCalls.Should().Be(1);
-        factoryToken.IsCancellationRequested.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task GetAsync_ShouldRespectCancellation_BeforeReading()
-    {
-        var (service, _, _, redis) = CreateService();
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
-
-        await service.Invoking(s => s.GetAsync<string>("key", cts.Token))
-            .Should().ThrowAsync<OperationCanceledException>();
-
-        redis.ScriptCalls.Should().Be(0);
-    }
-
-    [Fact]
-    public async Task GetOrCreateAsync_ShouldServeSecondCallFromCache()
-    {
-        var (service, cache, _, _) = CreateService();
+        await using var ctx = CreateContext();
         var calls = 0;
 
         Task<string> Factory(CancellationToken _)
         {
-            calls++;
+            Interlocked.Increment(ref calls);
             return Task.FromResult("value");
         }
 
-        (await service.GetOrCreateAsync("key", Factory)).Should().Be("value");
-        (await service.GetOrCreateAsync("key", Factory)).Should().Be("value");
+        (await ctx.Service.GetOrCreateAsync("products:1", Factory, TimeSpan.FromMinutes(5))).Should().Be("value");
+        (await ctx.Service.GetOrCreateAsync("products:1", Factory, TimeSpan.FromMinutes(5))).Should().Be("value");
 
         calls.Should().Be(1);
-        cache.Entries.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task GetOrCreateAsync_ShouldServeFromL2_WhenLocalCacheIsBypassed()
+    {
+        await using var producer = CreateContext();
+        var calls = 0;
+
+        (await producer.Service.GetOrCreateAsync("products:l2", _ =>
+        {
+            calls++;
+            return Task.FromResult(new Payload("l2", 7));
+        }, TimeSpan.FromMinutes(5))).Should().BeEquivalentTo(new Payload("l2", 7));
+
+        // New HybridCache instance = empty L1, but same distributed cache (L2).
+        await using var consumer = CreateContext(producer.Distributed, producer.Redis);
+
+        var fromL2 = await consumer.Service.GetOrCreateAsync("products:l2", _ =>
+        {
+            calls++;
+            return Task.FromResult(new Payload("factory", 0));
+        }, TimeSpan.FromMinutes(5));
+
+        fromL2.Should().BeEquivalentTo(new Payload("l2", 7));
+        calls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetOrCreateAsync_ShouldMiss_WhenDistributedEntryExpired()
+    {
+        await using var ctx = CreateContext();
+        var calls = 0;
+
+        await ctx.Service.GetOrCreateAsync("products:ttl", _ =>
+        {
+            calls++;
+            return Task.FromResult("first");
+        }, TimeSpan.FromMilliseconds(50));
+
+        // Force expiration by clearing distributed storage (simulates Redis TTL expiry).
+        ctx.Distributed.Clear();
+        await Task.Delay(10);
+
+        // New instance to avoid serving from L1 after simulated L2 expiry.
+        await using var fresh = CreateContext(ctx.Distributed, ctx.Redis);
+        var value = await fresh.Service.GetOrCreateAsync("products:ttl", _ =>
+        {
+            calls++;
+            return Task.FromResult("second");
+        }, TimeSpan.FromMinutes(1));
+
+        value.Should().Be("second");
+        calls.Should().BeGreaterThanOrEqualTo(2);
+    }
+
+    [Fact]
+    public async Task RemoveByPrefixAsync_ShouldInvalidateScopedEntries_AndNotAffectOtherScopes()
+    {
+        await using var ctx = CreateContext();
+
+        await ctx.Service.GetOrCreateAsync("products:1", _ => Task.FromResult("p1"), TimeSpan.FromMinutes(5));
+        await ctx.Service.GetOrCreateAsync("brands:all", _ => Task.FromResult("b1"), TimeSpan.FromMinutes(30));
+
+        await ctx.Service.RemoveByPrefixAsync(CacheScopes.Products);
+
+        var productCalls = 0;
+        (await ctx.Service.GetOrCreateAsync("products:1", _ =>
+        {
+            productCalls++;
+            return Task.FromResult("p2");
+        }, TimeSpan.FromMinutes(5))).Should().Be("p2");
+        productCalls.Should().Be(1);
+
+        var brandCalls = 0;
+        (await ctx.Service.GetOrCreateAsync("brands:all", _ =>
+        {
+            brandCalls++;
+            return Task.FromResult("b2");
+        }, TimeSpan.FromMinutes(30))).Should().Be("b1");
+        brandCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetOrCreateAsync_ShouldProvideStampedeProtection_UnderConcurrency()
+    {
+        await using var ctx = CreateContext();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var factoryCalls = 0;
+
+        async Task<string> Factory(CancellationToken _)
+        {
+            Interlocked.Increment(ref factoryCalls);
+            started.TrySetResult();
+            await release.Task;
+            return "value";
+        }
+
+        var first = ctx.Service.GetOrCreateAsync("products:stampede", Factory, TimeSpan.FromMinutes(5));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var concurrent = Enumerable.Range(0, 9)
+            .Select(_ => ctx.Service.GetOrCreateAsync("products:stampede", Factory, TimeSpan.FromMinutes(5)))
+            .ToArray();
+
+        release.SetResult();
+
+        var values = await Task.WhenAll(concurrent.Prepend(first));
+        values.Should().AllBe("value");
+        factoryCalls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetOrCreateAsync_ShouldFallbackToFactory_WhenDistributedCacheReadFails()
+    {
+        var distributed = new ThrowingDistributedCache(throwOnGet: true);
+        var redis = new FakeRedisDistributed(distributed);
+        var settings = new CacheSettings
+        {
+            DefaultExpiration = TimeSpan.FromMinutes(5),
+            LocalCacheExpiration = TimeSpan.FromMinutes(2),
+            DistributedCacheExpiration = TimeSpan.FromMinutes(5)
+        };
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IDistributedCache>(distributed);
+        services.AddHybridCache(options =>
+        {
+            options.DefaultEntryOptions = new HybridCacheEntryOptions
+            {
+                Expiration = settings.DistributedCacheExpiration,
+                LocalCacheExpiration = settings.LocalCacheExpiration
+            };
+        });
+
+        await using var provider = services.BuildServiceProvider();
+        var service = new HybridCacheService(
+            provider.GetRequiredService<HybridCache>(),
+            distributed,
+            redis.Multiplexer,
+            Options.Create(new RedisCacheOptions { InstanceName = "ECommerce:" }),
+            Options.Create(settings),
+            NullLogger<HybridCacheService>.Instance);
+
+        var calls = 0;
+        var value = await service.GetOrCreateAsync("products:failopen", _ =>
+        {
+            calls++;
+            return Task.FromResult("from-db");
+        }, TimeSpan.FromMinutes(5));
+
+        value.Should().Be("from-db");
+        calls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetOrCreateAsync_ShouldFallbackToFactory_WhenGenerationReadFails()
+    {
+        await using var ctx = CreateContext();
+        ctx.Redis.ThrowOnGenerationGet = true;
+        var calls = 0;
+
+        var value = await ctx.Service.GetOrCreateAsync("products:genfail", _ =>
+        {
+            calls++;
+            return Task.FromResult("from-db");
+        }, TimeSpan.FromMinutes(5));
+
+        value.Should().Be("from-db");
+        calls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task SetAsync_And_GetAsync_ShouldRoundTripSerializedValues()
+    {
+        await using var ctx = CreateContext();
+        var payload = new Payload("name", 42);
+
+        await ctx.Service.SetAsync("plain:payload", payload, TimeSpan.FromMinutes(5));
+
+        (await ctx.Service.GetAsync<Payload>("plain:payload")).Should().BeEquivalentTo(payload);
+    }
+
+    [Fact]
+    public async Task GetAsync_ShouldReturnDefault_OnMissOrFailure()
+    {
+        await using var ctx = CreateContext();
+
+        (await ctx.Service.GetAsync<string>("missing")).Should().BeNull();
+
+        ctx.Distributed.ThrowOnGet = true;
+        (await ctx.Service.GetAsync<string>("missing")).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SetAsync_And_RemoveByPrefixAsync_ShouldBeFailOpen_OnErrors()
+    {
+        await using var ctx = CreateContext();
+        ctx.Distributed.ThrowOnSet = true;
+        await ctx.Service.Invoking(s => s.SetAsync("products:x", "v")).Should().NotThrowAsync();
+
+        ctx.Redis.ThrowOnIncrement = true;
+        await ctx.Service.Invoking(s => s.RemoveByPrefixAsync(CacheScopes.Products)).Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task GetOrCreateAsync_ShouldRespectCancellation()
+    {
+        await using var ctx = CreateContext();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Func<Task> act = () => ctx.Service.GetOrCreateAsync("products:ct", _ => Task.FromResult("x"), ct: cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     [Fact]
     public async Task GetOrCreateAsync_ShouldNotCacheFailedFactory()
     {
-        var (service, _, _, _) = CreateService();
+        await using var ctx = CreateContext();
+
+        Func<Task> failing = () => ctx.Service.GetOrCreateAsync<string>("products:fail", _ =>
+            Task.FromException<string>(new InvalidOperationException("boom")));
+        await failing.Should().ThrowAsync<InvalidOperationException>();
+
         var calls = 0;
-
-        Task<string> Failing(CancellationToken _) =>
-            Task.FromException<string>(new InvalidOperationException("boom"));
-
-        await service.Invoking(s => s.GetOrCreateAsync("key", Failing))
-            .Should().ThrowAsync<InvalidOperationException>();
-
-        var recovered = await service.GetOrCreateAsync("key", _ =>
+        (await ctx.Service.GetOrCreateAsync("products:fail", _ =>
         {
             calls++;
             return Task.FromResult("recovered");
-        });
-
-        recovered.Should().Be("recovered");
+        })).Should().Be("recovered");
         calls.Should().Be(1);
-    }
-
-    [Fact]
-    public async Task GetOrCreateAsync_ShouldCacheNullReferenceResults()
-    {
-        var (service, _, _, _) = CreateService();
-
-        var result = await service.GetOrCreateAsync<string?>("key", _ => Task.FromResult<string?>(null));
-        result.Should().BeNull();
-
-        var extraCalls = 0;
-        (await service.GetOrCreateAsync<string?>("key", _ =>
-        {
-            extraCalls++;
-            return Task.FromResult<string?>("not used");
-        })).Should().BeNull();
-
-        extraCalls.Should().Be(0);
-    }
-
-    [Fact]
-    public async Task SetAsync_ShouldApplyConfiguredTtl()
-    {
-        var (service, cache, _, _) = CreateService();
-
-        await service.SetAsync("key", "value", TimeSpan.FromSeconds(42));
-
-        // The InstanceName prefix is added by the real IDistributedCache.
-        var options = cache.Options.Should().ContainKey("key|g0").WhoseValue;
-        options.AbsoluteExpirationRelativeToNow.Should().Be(TimeSpan.FromSeconds(42));
-    }
-
-    [Fact]
-    public async Task SetAsync_ShouldUseFallbackTtl_WhenNoExpirationGiven()
-    {
-        var (service, cache, _, _) = CreateService();
-
-        await service.SetAsync("key", "value");
-
-        cache.Options["key|g0"].AbsoluteExpirationRelativeToNow
-            .Should().Be(TimeSpan.FromMinutes(10));
-    }
-
-    [Fact]
-    public async Task SetAsync_ShouldAppendGenerationToLogicalRedisKey()
-    {
-        var (service, cache, _, _) = CreateService();
-
-        await service.SetAsync("Products:Id:abc", "value");
-
-        // The service owns the generation suffix; IDistributedCache owns the
-        // instance-name prefix.
-        cache.Entries.Keys.Should().ContainSingle()
-            .Which.Should().Be("Products:Id:abc|g0");
-    }
-
-    [Fact]
-    public async Task GetAsync_ShouldTreatExpiredEntryAsMiss()
-    {
-        var (service, cache, _, _) = CreateService();
-        await service.SetAsync("key", "value", TimeSpan.FromMilliseconds(1));
-
-        // Redis removes the hash when its TTL elapses; emulate that here.
-        cache.Expire("key|g0");
-
-        (await service.GetAsync<string>("key")).Should().BeNull();
     }
 
     [Fact]
     public async Task GetOrCreateAsync_ShouldStoreSeparateEntries_ForDifferentPagingParameters()
     {
-        var (service, cache, _, _) = CreateService();
+        await using var ctx = CreateContext();
 
-        await service.GetOrCreateAsync(
+        await ctx.Service.GetOrCreateAsync(
             ProductCacheKeys.List(new ProductSpecificationParameters { PageNumber = 1, PageSize = 10 }),
-            _ => Task.FromResult("page 1"));
-        await service.GetOrCreateAsync(
+            _ => Task.FromResult("page 1"),
+            TimeSpan.FromMinutes(5));
+        await ctx.Service.GetOrCreateAsync(
             ProductCacheKeys.List(new ProductSpecificationParameters { PageNumber = 2, PageSize = 10 }),
-            _ => Task.FromResult("page 2"));
+            _ => Task.FromResult("page 2"),
+            TimeSpan.FromMinutes(5));
 
-        cache.Entries.Should().HaveCount(2);
-        cache.Entries.Keys.Should().OnlyContain(key => key.StartsWith("Products:Page:", StringComparison.Ordinal));
+        (await ctx.Service.GetOrCreateAsync(
+            ProductCacheKeys.List(new ProductSpecificationParameters { PageNumber = 1, PageSize = 10 }),
+            _ => Task.FromResult("wrong"),
+            TimeSpan.FromMinutes(5))).Should().Be("page 1");
     }
 
     [Fact]
-    public async Task RemoveByPrefixAsync_ShouldInvalidateAllProductPagesAndDetails()
+    public async Task CacheSettings_ShouldConfigureLocalAndDistributedExpirations()
     {
-        var (service, cache, _, _) = CreateService();
-        var listKey = ProductCacheKeys.List(new ProductSpecificationParameters());
-        var detailsKey = ProductCacheKeys.Details(Guid.NewGuid());
-
-        await service.SetAsync(listKey, "list");
-        await service.SetAsync(detailsKey, "details");
-        cache.Entries.Should().HaveCount(2);
-
-        await service.RemoveByPrefixAsync(CacheScopes.Products);
-
-        (await service.GetAsync<string>(listKey)).Should().BeNull();
-        (await service.GetAsync<string>(detailsKey)).Should().BeNull();
-
-        // Generation invalidation never calls KEYS/SCAN: old Redis entries stay
-        // until their TTL but are no longer reachable through the new generation.
-        cache.Entries.Should().HaveCount(2);
-    }
-
-    [Fact]
-    public async Task RemoveByPrefixAsync_ShouldNotAffectOtherScopes()
-    {
-        var (service, _, _, _) = CreateService();
-
-        await service.SetAsync("products:1", "product");
-        await service.SetAsync("brands:all", "brands");
-
-        await service.RemoveByPrefixAsync(CacheScopes.Products);
-
-        (await service.GetAsync<string>("products:1")).Should().BeNull();
-        (await service.GetAsync<string>("brands:all")).Should().Be("brands");
-    }
-
-    [Fact]
-    public async Task GetOrCreateAsync_WithInvalidationDuringLoad_ShouldNotServeStaleValueOnNextRead()
-    {
-        var (service, _, _, _) = CreateService();
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        var load = service.GetOrCreateAsync("products:1", async _ =>
+        var settings = new CacheSettings
         {
-            started.SetResult();
-            await release.Task;
-            return "stale";
-        });
-        await started.Task;
-
-        await service.RemoveByPrefixAsync(CacheScopes.Products);
-        release.SetResult();
-
-        (await load).Should().Be("stale");
-        (await service.GetAsync<string>("products:1")).Should().BeNull();
-    }
-
-    [Fact]
-    public async Task GetAsync_ShouldNotServeValue_InvalidatedDuringAtomicRead()
-    {
-        var (service, _, _, redis) = CreateService();
-        await service.SetAsync("products:1", "stale");
-
-        var invalidated = false;
-        redis.OnScript = () =>
-        {
-            if (invalidated)
-            {
-                return;
-            }
-
-            invalidated = true;
-            redis.Increment(CacheScopes.Products);
+            DefaultExpiration = TimeSpan.FromMinutes(10),
+            LocalCacheExpiration = TimeSpan.FromMinutes(1),
+            DistributedCacheExpiration = TimeSpan.FromMinutes(8)
         };
 
-        (await service.GetAsync<string>("products:1")).Should().BeNull();
+        settings.EffectiveDistributed(null).Should().Be(TimeSpan.FromMinutes(8));
+        settings.EffectiveDistributed(TimeSpan.FromMinutes(3)).Should().Be(TimeSpan.FromMinutes(3));
+        settings.EffectiveLocal(TimeSpan.FromMinutes(5)).Should().Be(TimeSpan.FromMinutes(1));
+        settings.EffectiveLocal(TimeSpan.FromSeconds(30)).Should().Be(TimeSpan.FromSeconds(30));
     }
 
     [Fact]
-    public async Task GetAsync_ShouldReturnNull_WhenRedisReadFails()
+    public void CacheSettings_ShouldRejectLocalGreaterThanDistributed()
     {
-        var (service, _, _, redis) = CreateService();
-        redis.ThrowOnScript = true;
-
-        (await service.GetAsync<string>("key")).Should().BeNull();
-    }
-
-    [Fact]
-    public async Task GetOrCreateAsync_ShouldFallBackToFactory_WhenRedisReadFails()
-    {
-        var (service, _, _, redis) = CreateService();
-        redis.ThrowOnScript = true;
-        var factoryCalls = 0;
-
-        var result = await service.GetOrCreateAsync("key", _ =>
+        var settings = new CacheSettings
         {
-            factoryCalls++;
-            return Task.FromResult("from-sql");
+            LocalCacheExpiration = TimeSpan.FromMinutes(10),
+            DistributedCacheExpiration = TimeSpan.FromMinutes(5)
+        };
+
+        settings.Invoking(s => s.Validate()).Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task GetOrCreateAsync_ShouldStoreDistinctL2Entries_PerGenerationScopedKey()
+    {
+        await using var ctx = CreateContext();
+
+        await ctx.Service.GetOrCreateAsync("products:details", _ => Task.FromResult("v1"), TimeSpan.FromMinutes(5));
+        await ctx.Service.RemoveByPrefixAsync(CacheScopes.Products);
+        await ctx.Service.GetOrCreateAsync("products:details", _ => Task.FromResult("v2"), TimeSpan.FromMinutes(5));
+
+        (await ctx.Service.GetOrCreateAsync("products:details", _ => Task.FromResult("v3"), TimeSpan.FromMinutes(5)))
+            .Should().Be("v2");
+    }
+
+    private static TestCacheContext CreateContext(
+        InMemoryDistributedCache? distributedCache = null,
+        FakeRedisDistributed? redis = null,
+        CacheSettings? settings = null)
+    {
+        distributedCache ??= new InMemoryDistributedCache();
+        redis ??= new FakeRedisDistributed(distributedCache);
+        settings ??= new CacheSettings
+        {
+            DefaultExpiration = TimeSpan.FromMinutes(5),
+            LocalCacheExpiration = TimeSpan.FromMinutes(2),
+            DistributedCacheExpiration = TimeSpan.FromMinutes(5)
+        };
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IDistributedCache>(distributedCache);
+        services.AddHybridCache(options =>
+        {
+            options.DefaultEntryOptions = new HybridCacheEntryOptions
+            {
+                Expiration = settings.DistributedCacheExpiration,
+                LocalCacheExpiration = settings.LocalCacheExpiration
+            };
         });
 
-        result.Should().Be("from-sql");
-        factoryCalls.Should().Be(1);
+        var provider = services.BuildServiceProvider();
+        var hybridCache = provider.GetRequiredService<HybridCache>();
+
+        var service = new HybridCacheService(
+            hybridCache,
+            distributedCache,
+            redis.Multiplexer,
+            Options.Create(new RedisCacheOptions { InstanceName = "ECommerce:" }),
+            Options.Create(settings),
+            NullLogger<HybridCacheService>.Instance);
+
+        return new TestCacheContext(service, distributedCache, redis, provider);
     }
 
-    [Fact]
-    public async Task GetOrCreateAsync_ShouldStillWork_WhenGenerationReadFails()
+    private sealed record Payload(string Name, int Value);
+
+    private sealed class TestCacheContext(
+        ICacheService service,
+        InMemoryDistributedCache distributed,
+        FakeRedisDistributed redis,
+        ServiceProvider provider) : IAsyncDisposable
     {
-        var (service, _, database, _) = CreateService();
-        database.StringGetAsync(Arg.Any<RedisKey>(), Arg.Any<CommandFlags>())
-            .Returns<RedisValue>(_ => throw new RedisException("generation read failed"));
+        public ICacheService Service { get; } = service;
+        public InMemoryDistributedCache Distributed { get; } = distributed;
+        public FakeRedisDistributed Redis { get; } = redis;
 
-        var result = await service.GetOrCreateAsync("key", _ => Task.FromResult("from-sql"));
-
-        result.Should().Be("from-sql");
-        (await service.GetAsync<string>("key")).Should().Be("from-sql");
+        public ValueTask DisposeAsync() => provider.DisposeAsync();
     }
 
-    [Fact]
-    public async Task SetAsync_ShouldSwallowRedisFailure()
-    {
-        var (service, cache, _, _) = CreateService();
-        cache.ThrowOnSet = true;
-
-        var act = async () => await service.SetAsync("key", "value");
-
-        await act.Should().NotThrowAsync();
-    }
-
-    [Fact]
-    public async Task RemoveByPrefixAsync_ShouldSwallowRedisFailure()
-    {
-        var (service, _, database, _) = CreateService();
-        database.StringIncrementAsync(Arg.Any<RedisKey>(), Arg.Any<long>(), Arg.Any<CommandFlags>())
-            .Returns<long>(_ => throw new RedisException("invalidate failed"));
-
-        var act = async () => await service.RemoveByPrefixAsync(CacheScopes.Products);
-
-        await act.Should().NotThrowAsync();
-    }
-
-    private static (RedisCacheService Service, FakeDistributedCache Cache, IDatabase Database, FakeRedis Redis) CreateService()
-    {
-        const string instanceName = "ECommerce:";
-        var cache = new FakeDistributedCache();
-        var (multiplexer, database, redis) = CreateMultiplexer(cache, instanceName);
-
-        var service = new RedisCacheService(
-            cache,
-            multiplexer,
-            Options.Create(new RedisCacheOptions { InstanceName = instanceName }),
-            NullLogger<RedisCacheService>.Instance);
-
-        return (service, cache, database, redis);
-    }
-
-    private static (IConnectionMultiplexer Multiplexer, IDatabase Database, FakeRedis Redis) CreateMultiplexer(
-        FakeDistributedCache cache,
-        string instanceName)
-    {
-        var redis = new FakeRedis(cache, instanceName);
-        var database = Substitute.For<IDatabase>();
-        var generationPrefix = instanceName + "gen:";
-
-        database.ScriptEvaluateAsync(
-                Arg.Any<string>(),
-                Arg.Any<RedisKey[]>(),
-                Arg.Any<RedisValue[]>(),
-                Arg.Any<CommandFlags>())
-            .Returns(call => redis.Evaluate(call.ArgAt<RedisKey[]>(1)));
-
-        database.StringGetAsync(Arg.Any<RedisKey>(), Arg.Any<CommandFlags>())
-            .Returns<RedisValue>(call =>
-            {
-                var key = call.Arg<RedisKey>().ToString();
-                var scope = key.StartsWith(generationPrefix, StringComparison.Ordinal)
-                    ? key[generationPrefix.Length..]
-                    : key;
-                return (RedisValue)redis.GetGeneration(scope);
-            });
-
-        database.StringIncrementAsync(Arg.Any<RedisKey>(), Arg.Any<long>(), Arg.Any<CommandFlags>())
-            .Returns<long>(call =>
-            {
-                var key = call.Arg<RedisKey>().ToString();
-                var scope = key.StartsWith(generationPrefix, StringComparison.Ordinal)
-                    ? key[generationPrefix.Length..]
-                    : key;
-                return redis.Increment(scope, call.Arg<long>());
-            });
-
-        var multiplexer = Substitute.For<IConnectionMultiplexer>();
-        multiplexer.GetDatabase().Returns(database);
-
-        return (multiplexer, database, redis);
-    }
-
-    private static async Task<T> WaitForAsync<T>(Task gate, T value)
-    {
-        await gate;
-        return value;
-    }
-
-    /// <summary>In-memory IDistributedCache that also captures TTL options.</summary>
-    private sealed class FakeDistributedCache : IDistributedCache
+    /// <summary>Simple in-memory IDistributedCache for tests (no TTL enforcement needed).</summary>
+    private sealed class InMemoryDistributedCache : IDistributedCache
     {
         private readonly ConcurrentDictionary<string, byte[]> _entries = new(StringComparer.Ordinal);
-
-        public ConcurrentDictionary<string, DistributedCacheEntryOptions> Options { get; } = new(StringComparer.Ordinal);
-
-        public IReadOnlyDictionary<string, byte[]> Entries => _entries;
-
-        public int GetCalls;
+        public bool ThrowOnGet { get; set; }
         public bool ThrowOnSet { get; set; }
 
         public byte[]? Get(string key) => GetAsync(key, default).GetAwaiter().GetResult();
 
-        public Task<byte[]?> GetAsync(string key, CancellationToken token)
+        public Task<byte[]?> GetAsync(string key, CancellationToken token = default)
         {
-            Interlocked.Increment(ref GetCalls);
-            return Task.FromResult(TryGet(key, out var bytes) ? bytes : null);
-        }
+            if (ThrowOnGet)
+            {
+                throw new RedisException("simulated get failure");
+            }
 
-        public bool TryGet(string key, out byte[]? bytes) => _entries.TryGetValue(key, out bytes);
-
-        public void Expire(string key)
-        {
-            _entries.TryRemove(key, out _);
-            Options.TryRemove(key, out _);
-        }
-
-        public void Refresh(string key)
-        {
-        }
-
-        public Task RefreshAsync(string key, CancellationToken token) => Task.CompletedTask;
-
-        public void Remove(string key) => RemoveAsync(key, default).GetAwaiter().GetResult();
-
-        public Task RemoveAsync(string key, CancellationToken token)
-        {
-            _entries.TryRemove(key, out _);
-            Options.TryRemove(key, out _);
-            return Task.CompletedTask;
+            return Task.FromResult(_entries.TryGetValue(key, out var value) ? value : null);
         }
 
         public void Set(string key, byte[] value, DistributedCacheEntryOptions options) =>
-            SetAsync(key, value, options, default).GetAwaiter().GetResult();
+            SetAsync(key, value, options).GetAwaiter().GetResult();
 
-        public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, CancellationToken token)
+        public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, CancellationToken token = default)
         {
             if (ThrowOnSet)
             {
@@ -510,70 +421,92 @@ public class CacheServiceTests
             }
 
             _entries[key] = value;
-            Options[key] = options;
             return Task.CompletedTask;
         }
-    }
 
-    /// <summary>
-    /// Models the generation counter and the Lua script's view of the
-    /// IDistributedCache hash layout.
-    /// </summary>
-    private sealed class FakeRedis(FakeDistributedCache cache, string instanceName)
-    {
-        private readonly ConcurrentDictionary<string, long> _generations = new(StringComparer.Ordinal);
+        public void Refresh(string key) { }
+        public Task RefreshAsync(string key, CancellationToken token = default) => Task.CompletedTask;
 
-        public int ScriptCalls;
-        public bool ThrowOnScript { get; set; }
-        public Action? OnScript { get; set; }
+        public void Remove(string key) => RemoveAsync(key).GetAwaiter().GetResult();
 
-        public long GetGeneration(string scope) =>
-            _generations.TryGetValue(scope, out var generation) ? generation : 0;
-
-        public long Increment(string scope, long by = 1)
+        public Task RemoveAsync(string key, CancellationToken token = default)
         {
-            var next = GetGeneration(scope) + by;
-            _generations[scope] = next;
-            return next;
+            _entries.TryRemove(key, out _);
+            return Task.CompletedTask;
         }
 
-        public Task<RedisResult> Evaluate(RedisKey[] keys)
+        public void Clear() => _entries.Clear();
+    }
+
+    private sealed class ThrowingDistributedCache(bool throwOnGet) : IDistributedCache
+    {
+        public byte[]? Get(string key) => throw new RedisException("boom");
+        public Task<byte[]?> GetAsync(string key, CancellationToken token = default) =>
+            throwOnGet ? throw new RedisException("boom") : Task.FromResult<byte[]?>(null);
+        public void Set(string key, byte[] value, DistributedCacheEntryOptions options) { }
+        public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, CancellationToken token = default) => Task.CompletedTask;
+        public void Refresh(string key) { }
+        public Task RefreshAsync(string key, CancellationToken token = default) => Task.CompletedTask;
+        public void Remove(string key) { }
+        public Task RemoveAsync(string key, CancellationToken token = default) => Task.CompletedTask;
+    }
+
+    /// <summary>Fakes the Redis multiplexer/database used for generation counters.</summary>
+    private sealed class FakeRedisDistributed
+    {
+        private readonly ConcurrentDictionary<string, long> _generations = new(StringComparer.OrdinalIgnoreCase);
+        private readonly IConnectionMultiplexer _multiplexer;
+
+        public bool ThrowOnGenerationGet { get; set; }
+        public bool ThrowOnIncrement { get; set; }
+
+        public FakeRedisDistributed(IDistributedCache _)
         {
-            Interlocked.Increment(ref ScriptCalls);
-
-            if (ThrowOnScript)
-            {
-                throw new RedisException("simulated script failure");
-            }
-
-            OnScript?.Invoke();
-
-            var generationKey = keys[0].ToString();
-            var generationPrefix = instanceName + "gen:";
-            var scope = generationKey.StartsWith(generationPrefix, StringComparison.Ordinal)
-                ? generationKey[generationPrefix.Length..]
-                : generationKey;
-            var generation = GetGeneration(scope);
-
-            var dataPrefix = keys[1].ToString();
-            var logicalPrefix = dataPrefix.StartsWith(instanceName, StringComparison.Ordinal)
-                ? dataPrefix[instanceName.Length..]
-                : dataPrefix;
-            var dataKey = logicalPrefix + generation.ToString(CultureInfo.InvariantCulture);
-
-            return cache.TryGet(dataKey, out var bytes)
-                ? Task.FromResult(RedisResult.Create(new RedisValue[]
+            var database = Substitute.For<IDatabase>();
+            database.StringGetAsync(Arg.Any<RedisKey>(), Arg.Any<CommandFlags>())
+                .Returns(call =>
                 {
-                    (RedisValue)generation.ToString(CultureInfo.InvariantCulture),
-                    (RedisValue)"1",
-                    (RedisValue)bytes!
-                }))
-                : Task.FromResult(RedisResult.Create(new RedisValue[]
+                    if (ThrowOnGenerationGet)
+                    {
+                        throw new RedisException("generation get failed");
+                    }
+
+                    var key = call.Arg<RedisKey>().ToString();
+                    var scope = ExtractScope(key);
+                    return Task.FromResult((RedisValue)GetGeneration(scope));
+                });
+
+            database.StringIncrementAsync(Arg.Any<RedisKey>(), Arg.Any<long>(), Arg.Any<CommandFlags>())
+                .Returns(call =>
                 {
-                    (RedisValue)generation.ToString(CultureInfo.InvariantCulture),
-                    (RedisValue)"0",
-                    (RedisValue)""
-                }));
+                    if (ThrowOnIncrement)
+                    {
+                        throw new RedisException("increment failed");
+                    }
+
+                    var key = call.Arg<RedisKey>().ToString();
+                    var scope = ExtractScope(key);
+                    var by = (long)call.ArgAt<long>(1);
+                    return Task.FromResult(Increment(scope, by));
+                });
+
+            database.ScriptEvaluateAsync(Arg.Any<string>(), Arg.Any<RedisKey[]>(), Arg.Any<RedisValue[]>(), Arg.Any<CommandFlags>())
+                .Returns(_ => Task.FromResult(RedisResult.Create(RedisValue.Null)));
+
+            _multiplexer = Substitute.For<IConnectionMultiplexer>();
+            _multiplexer.GetDatabase(Arg.Any<int>(), Arg.Any<object>()).Returns(database);
+        }
+
+        public IConnectionMultiplexer Multiplexer => _multiplexer;
+
+        private long GetGeneration(string scope) => _generations.TryGetValue(scope, out var v) ? v : 0;
+        private long Increment(string scope, long by) => _generations.AddOrUpdate(scope, by, (_, cur) => cur + by);
+
+        private static string ExtractScope(string key)
+        {
+            const string marker = "__gen:";
+            var idx = key.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            return idx >= 0 ? key[(idx + marker.Length)..] : key;
         }
     }
 }

@@ -155,21 +155,34 @@ public sealed class RedisBasketStore(
 
             if (result.IsNull || result.Length == 0)
             {
+                throw new BasketStorageException("Redis returned an unexpected empty result while deleting the basket.");
+            }
+
+            var status = (string?)result[0];
+            if (string.Equals(status, "deleted", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (string.Equals(status, "conflict", StringComparison.Ordinal))
+            {
                 return false;
             }
 
-            return string.Equals((string?)result[0], "deleted", StringComparison.Ordinal);
+            throw new BasketStorageException($"Redis returned an unexpected delete status '{status}'.");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
+        catch (BasketStorageException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
-            // Merge already persisted the user basket; the idempotency marker
-            // protects retries, so a failed guest delete must not roll back.
             LogFailure("delete", key, ex);
-            return false;
+            throw new BasketStorageException("Failed to delete the basket from Redis.", ex);
         }
     }
 

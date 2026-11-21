@@ -1,3 +1,5 @@
+using ECommerce.Domain.Common;
+
 namespace ECommerce.Domain.Entities
 {
     /// <summary>
@@ -28,7 +30,7 @@ namespace ECommerce.Domain.Entities
 
         public DateTime AddedAt { get; private set; }
 
-        public static BasketItem Create(
+        public static Result<BasketItem> Create(
             Guid productId,
             int quantity,
             decimal? priceAtAdd,
@@ -36,12 +38,12 @@ namespace ECommerce.Domain.Entities
         {
             if (productId == Guid.Empty)
             {
-                throw new ArgumentException("A product id is required.", nameof(productId));
+                return Error.Validation("Basket.InvalidProductId", "A product id is required.");
             }
 
             if (quantity <= 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(quantity), "Basket quantity must be positive.");
+                return BasketErrors.InvalidQuantity;
             }
 
             return new BasketItem(productId, quantity, priceAtAdd, utcNow);
@@ -53,24 +55,26 @@ namespace ECommerce.Domain.Entities
             decimal? priceAtAdd,
             DateTime addedAt) => new(productId, quantity, priceAtAdd, addedAt);
 
-        public void IncreaseQuantity(int amount)
+        public Result IncreaseQuantity(int amount)
         {
             if (amount <= 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(amount), "Increase amount must be positive.");
+                return BasketErrors.InvalidQuantity;
             }
 
             Quantity += amount;
+            return Result.Success();
         }
 
-        public void SetQuantity(int quantity)
+        public Result SetQuantity(int quantity)
         {
             if (quantity <= 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(quantity), "Basket quantity must be positive.");
+                return BasketErrors.InvalidQuantity;
             }
 
             Quantity = quantity;
+            return Result.Success();
         }
 
         public void SetPriceAtAddIfMissing(decimal? priceAtAdd)
