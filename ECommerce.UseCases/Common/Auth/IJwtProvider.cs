@@ -9,4 +9,6 @@ public record AuthResponse(
     string Token,
     string Email,
     string FullName,
-    DateTime ExpiresAt);
+    DateTime ExpiresAt,
+    string RefreshToken = "",
+    DateTime RefreshTokenExpiresAt = default);

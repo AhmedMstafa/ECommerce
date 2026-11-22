@@ -14,6 +14,8 @@ public class StoreDbContext(DbContextOptions<StoreDbContext> options)
     public DbSet<ProductBrand> Brands => Set<ProductBrand>();
     public DbSet<ProductType> Types => Set<ProductType>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<Address> Addresses => Set<Address>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
