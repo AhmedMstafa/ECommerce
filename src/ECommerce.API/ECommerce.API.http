@@ -1,0 +1,93 @@
+@baseUrl = http://localhost:5246
+@api = {{baseUrl}}/api/v1
+@email = test.user@example.com
+@password = replace-with-a-strong-password
+@token = paste-JWT-from-login-here
+@adminToken = paste-admin-JWT-here
+@productId = replace-with-product-id
+
+### Health: liveness (no dependencies, always 200)
+GET {{baseUrl}}/health/live
+Accept: application/health+json
+
+### Health: readiness (checks tagged "ready")
+GET {{baseUrl}}/health/ready
+Accept: application/health+json
+
+### Register
+POST {{api}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}",
+  "firstName": "Test",
+  "lastName": "User"
+}
+
+### Login (copy the token from data.token into @token)
+POST {{api}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### Forgot password (writes an Email outbox message)
+POST {{api}}/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "{{email}}"
+}
+
+### Google login
+POST {{api}}/auth/google-login
+Content-Type: application/json
+
+{
+  "idToken": "Google ID token from the client"
+}
+
+### Link Google account to the authenticated user
+POST {{api}}/auth/link-google
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "idToken": "Google ID token from the client"
+}
+
+### List products (pagination and filtering)
+GET {{api}}/products?pageIndex=1&pageSize=10&sort=priceasc
+Accept: application/json
+
+### Get product by id
+GET {{api}}/products/{{productId}}
+Accept: application/json
+
+### Create product (requires Admin role)
+POST {{api}}/products
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+
+{
+  "name": "Sample Product",
+  "description": "A product created from the .http file.",
+  "pictureUrl": "https://example.com/sample.png",
+  "price": 19.99,
+  "productBrandId": "replace-with-brand-id",
+  "productTypeId": "replace-with-type-id"
+}
+
+### List brands
+GET {{api}}/brands
+Accept: application/json
+
+### List types
+GET {{api}}/types
+Accept: application/json
+
+### Swagger UI
+GET {{baseUrl}}/swagger/index.html
