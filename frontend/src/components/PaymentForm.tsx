@@ -45,6 +45,17 @@ function PaymentFormInner({
     event.preventDefault();
     if (!stripe || !elements || !elementReady || busy) return;
 
+    // Stripe.js requires the Payment Element to be submitted (validated)
+    // before confirmPayment. Do this immediately on the pay press, before
+    // any other asynchronous work or parent phase changes.
+    const { error: submitError } = await elements.submit();
+    if (submitError) {
+      const message = submitError.message ?? 'Please check your payment details.';
+      setLocalError(message);
+      onComplete(message);
+      return;
+    }
+
     setBusy(true);
     setLocalError(null);
     // The parent must keep this component mounted while the phase is
