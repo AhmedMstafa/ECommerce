@@ -56,7 +56,14 @@ public static class DependancyInjection
         {
             options.UseSqlServer(
                 connectionString,
-                sqlOptions => sqlOptions.MigrationsAssembly(typeof(StoreDbContext).Assembly.FullName))
+                sqlOptions =>
+                {
+                    sqlOptions.MigrationsAssembly(typeof(StoreDbContext).Assembly.FullName);
+                    sqlOptions.EnableRetryOnFailure(
+                        maxRetryCount: 5,
+                        maxRetryDelay: TimeSpan.FromSeconds(10),
+                        errorNumbersToAdd: null);
+                })
             .AddInterceptors(serviceProvider.GetRequiredService<AuditableEntityInterceptor>());
 
             if (isDevelopment)

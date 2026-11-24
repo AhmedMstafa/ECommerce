@@ -303,77 +303,81 @@ public class IdentityService(
         var tokenHash = HashRefreshToken(refreshToken);
         var utcNow = DateTime.UtcNow;
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
-        try
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
         {
-            var storedToken = await dbContext.RefreshTokens
-                .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(x => x.TokenHash == tokenHash && !x.IsDeleted, ct);
-
-            if (storedToken is null)
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
+            try
             {
-                return Result.Failure<AuthResponse>(Error.Unauthorized("Auth.InvalidRefreshToken", "Invalid refresh token."));
-            }
+                var storedToken = await dbContext.RefreshTokens
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(x => x.TokenHash == tokenHash && !x.IsDeleted, ct);
 
-            if (storedToken.RevokedAtUtc is not null || storedToken.ReplacedByTokenHash is not null)
-            {
-                // Reuse of a rotated/revoked token - revoke active tokens for safety.
-                await RevokeAllActiveUserRefreshTokensAsync(storedToken.UserId, utcNow, "Attempted reuse of revoked refresh token", ct);
+                if (storedToken is null)
+                {
+                    return Result.Failure<AuthResponse>(Error.Unauthorized("Auth.InvalidRefreshToken", "Invalid refresh token."));
+                }
+
+                if (storedToken.RevokedAtUtc is not null || storedToken.ReplacedByTokenHash is not null)
+                {
+                    // Reuse of a rotated/revoked token - revoke active tokens for safety.
+                    await RevokeAllActiveUserRefreshTokensAsync(storedToken.UserId, utcNow, "Attempted reuse of revoked refresh token", ct);
+                    await dbContext.SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+                    logger.LogWarning("Refresh token reuse detected for user {UserId}", storedToken.UserId);
+                    return Result.Failure<AuthResponse>(Error.Unauthorized("Auth.RefreshTokenReuse", "Refresh token is invalid or has been reused."));
+                }
+
+                if (storedToken.IsExpired(utcNow))
+                {
+                    storedToken.Revoke(utcNow, "Expired");
+                    await dbContext.SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+                    return Result.Failure<AuthResponse>(Error.Unauthorized("Auth.RefreshTokenExpired", "Refresh token has expired."));
+                }
+
+                var user = await userManager.FindByIdAsync(storedToken.UserId.ToString());
+                if (user is null)
+                {
+                    return Result.Failure<AuthResponse>(Error.Unauthorized("Auth.InvalidRefreshToken", "Invalid refresh token."));
+                }
+
+                // Atomic rotation: only revoke if still active/unrevoked.
+                var revokedRows = await dbContext.RefreshTokens
+                    .IgnoreQueryFilters()
+                    .Where(x => x.Id == storedToken.Id && x.RevokedAtUtc == null && !x.IsDeleted)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(x => x.RevokedAtUtc, utcNow)
+                        .SetProperty(x => x.ReasonRevoked, "Rotated")
+                        .SetProperty(x => x.UpdatedAt, new DateTimeOffset(utcNow, TimeSpan.Zero)), ct);
+
+                if (revokedRows == 0)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Result.Failure<AuthResponse>(Error.Unauthorized("Auth.RefreshTokenReuse", "Refresh token is invalid or has been reused."));
+                }
+
+                var (plainToken, refreshEntity) = CreateRefreshTokenEntity(user.Id, utcNow);
+                // set replaced-by on old token
+                await dbContext.RefreshTokens
+                    .IgnoreQueryFilters()
+                    .Where(x => x.Id == storedToken.Id)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(x => x.ReplacedByTokenHash, refreshEntity.TokenHash), ct);
+
+                dbContext.RefreshTokens.Add(refreshEntity);
                 await dbContext.SaveChangesAsync(ct);
                 await transaction.CommitAsync(ct);
-                logger.LogWarning("Refresh token reuse detected for user {UserId}", storedToken.UserId);
-                return Result.Failure<AuthResponse>(Error.Unauthorized("Auth.RefreshTokenReuse", "Refresh token is invalid or has been reused."));
+
+                var auth = await BuildAuthResponseAsync(user, plainToken, refreshEntity.ExpiresAtUtc, ct);
+                return Result.Success(auth);
             }
-
-            if (storedToken.IsExpired(utcNow))
-            {
-                storedToken.Revoke(utcNow, "Expired");
-                await dbContext.SaveChangesAsync(ct);
-                await transaction.CommitAsync(ct);
-                return Result.Failure<AuthResponse>(Error.Unauthorized("Auth.RefreshTokenExpired", "Refresh token has expired."));
-            }
-
-            var user = await userManager.FindByIdAsync(storedToken.UserId.ToString());
-            if (user is null)
-            {
-                return Result.Failure<AuthResponse>(Error.Unauthorized("Auth.InvalidRefreshToken", "Invalid refresh token."));
-            }
-
-            // Atomic rotation: only revoke if still active/unrevoked.
-            var revokedRows = await dbContext.RefreshTokens
-                .IgnoreQueryFilters()
-                .Where(x => x.Id == storedToken.Id && x.RevokedAtUtc == null && !x.IsDeleted)
-                .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(x => x.RevokedAtUtc, utcNow)
-                    .SetProperty(x => x.ReasonRevoked, "Rotated")
-                    .SetProperty(x => x.UpdatedAt, new DateTimeOffset(utcNow, TimeSpan.Zero)), ct);
-
-            if (revokedRows == 0)
+            catch
             {
                 await transaction.RollbackAsync(ct);
-                return Result.Failure<AuthResponse>(Error.Unauthorized("Auth.RefreshTokenReuse", "Refresh token is invalid or has been reused."));
+                throw;
             }
-
-            var (plainToken, refreshEntity) = CreateRefreshTokenEntity(user.Id, utcNow);
-            // set replaced-by on old token
-            await dbContext.RefreshTokens
-                .IgnoreQueryFilters()
-                .Where(x => x.Id == storedToken.Id)
-                .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(x => x.ReplacedByTokenHash, refreshEntity.TokenHash), ct);
-
-            dbContext.RefreshTokens.Add(refreshEntity);
-            await dbContext.SaveChangesAsync(ct);
-            await transaction.CommitAsync(ct);
-
-            var auth = await BuildAuthResponseAsync(user, plainToken, refreshEntity.ExpiresAtUtc, ct);
-            return Result.Success(auth);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(ct);
-            throw;
-        }
+        });
     }
 
     public async Task<Result> LogoutAsync(Guid userId, string refreshToken, CancellationToken ct = default)
@@ -533,31 +537,35 @@ public class IdentityService(
             return Result.Failure<AddressResponse>(addressResult.Error!);
         }
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
-        try
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
         {
-            var hasAddresses = await dbContext.Addresses.AnyAsync(x => x.UserId == userId, ct);
-            var address = addressResult.Value;
-
-            if (!hasAddresses)
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
+            try
             {
-                address.SetDefault(true, utcNow);
-            }
-            else if (address.IsDefault)
-            {
-                await ClearDefaultAddressesAsync(userId, utcNow, ct);
-            }
+                var hasAddresses = await dbContext.Addresses.AnyAsync(x => x.UserId == userId, ct);
+                var address = addressResult.Value;
 
-            dbContext.Addresses.Add(address);
-            await dbContext.SaveChangesAsync(ct);
-            await transaction.CommitAsync(ct);
-            return Result.Success(MapAddress(address));
-        }
-        catch
-        {
-            await transaction.RollbackAsync(ct);
-            throw;
-        }
+                if (!hasAddresses)
+                {
+                    address.SetDefault(true, utcNow);
+                }
+                else if (address.IsDefault)
+                {
+                    await ClearDefaultAddressesAsync(userId, utcNow, ct);
+                }
+
+                dbContext.Addresses.Add(address);
+                await dbContext.SaveChangesAsync(ct);
+                await transaction.CommitAsync(ct);
+                return Result.Success(MapAddress(address));
+            }
+            catch
+            {
+                await transaction.RollbackAsync(ct);
+                throw;
+            }
+        });
     }
 
     public async Task<Result> RemoveAddressAsync(Guid userId, Guid addressId, CancellationToken ct = default)
@@ -572,52 +580,56 @@ public class IdentityService(
             return Result.Failure(Error.Validation("Address.InvalidId", "A valid address id is required."));
         }
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
-        try
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
         {
-            var address = await dbContext.Addresses.FirstOrDefaultAsync(x => x.Id == addressId, ct);
-            if (address is null)
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
+            try
             {
-                return Result.Failure(Error.NotFound("Address.NotFound", "Address was not found."));
-            }
-
-            if (address.UserId != userId)
-            {
-                return Result.Failure(Error.Forbidden("Address.Ownership", "You cannot remove another user's address."));
-            }
-
-            var wasDefault = address.IsDefault;
-            var deleteResult = address.MarkAsDeleted();
-            if (deleteResult.IsFailure)
-            {
-                return deleteResult;
-            }
-
-            address.SetDefault(false, DateTime.UtcNow);
-            await dbContext.SaveChangesAsync(ct);
-
-            if (wasDefault)
-            {
-                var nextDefault = await dbContext.Addresses
-                    .Where(x => x.UserId == userId)
-                    .OrderByDescending(x => x.CreatedAt)
-                    .FirstOrDefaultAsync(ct);
-
-                if (nextDefault is not null)
+                var address = await dbContext.Addresses.FirstOrDefaultAsync(x => x.Id == addressId, ct);
+                if (address is null)
                 {
-                    nextDefault.SetDefault(true, DateTime.UtcNow);
-                    await dbContext.SaveChangesAsync(ct);
+                    return Result.Failure(Error.NotFound("Address.NotFound", "Address was not found."));
                 }
-            }
 
-            await transaction.CommitAsync(ct);
-            return Result.Success();
-        }
-        catch
-        {
-            await transaction.RollbackAsync(ct);
-            throw;
-        }
+                if (address.UserId != userId)
+                {
+                    return Result.Failure(Error.Forbidden("Address.Ownership", "You cannot remove another user's address."));
+                }
+
+                var wasDefault = address.IsDefault;
+                var deleteResult = address.MarkAsDeleted();
+                if (deleteResult.IsFailure)
+                {
+                    return deleteResult;
+                }
+
+                address.SetDefault(false, DateTime.UtcNow);
+                await dbContext.SaveChangesAsync(ct);
+
+                if (wasDefault)
+                {
+                    var nextDefault = await dbContext.Addresses
+                        .Where(x => x.UserId == userId)
+                        .OrderByDescending(x => x.CreatedAt)
+                        .FirstOrDefaultAsync(ct);
+
+                    if (nextDefault is not null)
+                    {
+                        nextDefault.SetDefault(true, DateTime.UtcNow);
+                        await dbContext.SaveChangesAsync(ct);
+                    }
+                }
+
+                await transaction.CommitAsync(ct);
+                return Result.Success();
+            }
+            catch
+            {
+                await transaction.RollbackAsync(ct);
+                throw;
+            }
+        });
     }
 
     public async Task<Result<AddressResponse>> GetDefaultAddressAsync(Guid userId, CancellationToken ct = default)
