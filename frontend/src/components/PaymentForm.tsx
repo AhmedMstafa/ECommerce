@@ -38,14 +38,18 @@ function PaymentFormInner({
   const stripe = useStripe();
   const elements = useElements();
   const [busy, setBusy] = useState(false);
+  const [elementReady, setElementReady] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!stripe || !elements || busy) return;
+    if (!stripe || !elements || !elementReady || busy) return;
 
     setBusy(true);
     setLocalError(null);
+    // The parent must keep this component mounted while the phase is
+    // "processing" or "redirecting"; confirmPayment needs a live Payment
+    // Element for the whole call.
     onProcessing();
 
     const returnUrl = `${window.location.origin}/checkout/return?orderId=${encodeURIComponent(orderId)}`;
@@ -82,14 +86,14 @@ function PaymentFormInner({
     <form onSubmit={handleSubmit} className="payment-form" aria-busy={busy}>
       <h3>Payment details</h3>
       <p className="hint">Card entry and 3DS are handled securely by Stripe.</p>
-      <PaymentElement />
+      <PaymentElement onReady={() => setElementReady(true)} />
       {localError && (
         <p role="alert" className="error">
           {localError}
         </p>
       )}
-      <button type="submit" disabled={!stripe || !elements || busy}>
-        {busy ? 'Confirming…' : 'Pay now'}
+      <button type="submit" disabled={!stripe || !elements || !elementReady || busy}>
+        {busy ? 'Confirming…' : elementReady ? 'Pay now' : 'Preparing payment…'}
       </button>
     </form>
   );

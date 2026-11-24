@@ -250,7 +250,7 @@ export default function CheckoutPage() {
             Total (from API, currency set by backend): <strong>{formatAmount(order.total)}</strong>
           </p>
 
-          {phase === 'awaiting-card' && clientSecret && (
+          {(phase === 'awaiting-card' || phase === 'processing' || phase === 'redirecting') && clientSecret && (
             <PaymentForm
               clientSecret={clientSecret}
               orderId={order.id}

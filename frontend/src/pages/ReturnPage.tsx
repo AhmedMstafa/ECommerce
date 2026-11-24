@@ -127,7 +127,7 @@ export default function ReturnPage() {
         </div>
       )}
 
-      {phase === 'awaiting-card' && clientSecret && order && (
+      {(phase === 'awaiting-card' || phase === 'processing' || phase === 'redirecting') && clientSecret && order && (
         <PaymentForm
           clientSecret={clientSecret}
           orderId={order.id}
