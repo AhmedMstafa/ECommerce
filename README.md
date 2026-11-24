@@ -87,7 +87,7 @@ Create new migrations with:
 
 ```powershell
 $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
-dotnet ef migrations add <Name> --project ECommerce.Infrastructure --startup-project ECommerce.API --output-dir Migrations
+dotnet ef migrations add <Name> --project src/ECommerce.Infrastructure --startup-project src/ECommerce.API --output-dir Migrations
 ```
 
 The design-time host loads the same root `.env`, so no manual secret injection

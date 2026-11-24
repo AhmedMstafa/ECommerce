@@ -77,14 +77,14 @@ dotnet test ECommerce.slnx --nologo -v q
 With a local SQL Server and no Docker:
 
 ```powershell
-dotnet test ECommerce.IntegrationTests/ECommerce.IntegrationTests.csproj --nologo
+dotnet test tests/ECommerce.IntegrationTests/ECommerce.IntegrationTests.csproj --nologo
 ```
 
 To point at a specific SQL Server explicitly:
 
 ```powershell
 $env:ECOMMERCE_TEST_SQL_CONNECTION='Server=localhost,1433;Database=master;User Id=sa;Password=<from-secret-store>;TrustServerCertificate=True'
-dotnet test ECommerce.IntegrationTests/ECommerce.IntegrationTests.csproj --nologo
+dotnet test tests/ECommerce.IntegrationTests/ECommerce.IntegrationTests.csproj --nologo
 ```
 
 Never commit that connection string. Use a secret store or an environment
