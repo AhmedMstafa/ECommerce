@@ -1,10 +1,51 @@
 # ECommerce API
 
-ASP.NET Core 10 Clean Architecture Web API with products, JWT/Identity auth,
-Google account linking, health checks, API versioning, Swagger, caching, a
-transactional outbox, and Hangfire processing.
+A production-oriented e-commerce platform: an ASP.NET Core 10 Web API following
+Clean Architecture, plus a React + Vite + TypeScript checkout frontend. The
+backend covers catalog browsing, identity, baskets, addresses, delivery methods,
+orders, and Stripe card payments. The frontend uses Stripe.js/Elements with
+PaymentIntents created by the API; it never creates a PaymentIntent or Checkout
+Session and never calls the webhook endpoint.
 
-Payment functionality is intentionally out of scope.
+## Live deployments
+
+| Service | URL |
+| --- | --- |
+| Checkout frontend (Vercel) | https://e-commerce-delta-two-53.vercel.app |
+| API (Railway) | https://ecommerce-production-880dc65e.up.railway.app |
+| Swagger UI | https://ecommerce-production-880dc65e.up.railway.app/swagger/index.html |
+| OpenAPI JSON (`v1`) | https://ecommerce-production-880dc65e.up.railway.app/swagger/v1/swagger.json |
+| API Dog (interactive API docs) | https://irbp0ctg70.apidog.io |
+
+All API endpoints are versioned under `/api/v1/...`. The deployed browser origin
+is registered in the API's `Cors:AllowedOrigins`; wildcard CORS is not used
+because the policy allows credentials.
+
+## What the project does
+
+- **Catalog** — products, brands, and types with filtering, sorting, and explicit
+  pagination (`PagedResponse<T>`). Reads are cached in Redis with single-flight
+  reads and generation-based invalidation.
+- **Identity** — ASP.NET Core Identity with JWT access tokens, refresh-token
+  rotation, strong password rules, HTML password-reset emails queued through the
+  outbox, and explicit Google account linking (a verified matching email never
+  auto-links an account).
+- **Basket** — Redis-backed basket for guests and authenticated users, merged on
+  login, priced from current SQL data with stock availability and price-change
+  detection.
+- **Addresses and delivery** — address CRUD with a default address and active
+  delivery methods; both are snapshotted onto the order at creation time.
+- **Orders and payments** — server-side totals, atomic stock decrement with
+  reservations, `Idempotency-Key` protection, backend-created Stripe
+  PaymentIntents, signed webhooks as the source of truth, retry/cancel flows,
+  reconciliation for stuck orders, and admin refunds.
+- **Resilience and operations** — transactional outbox with leases and
+  exponential backoff processed by Hangfire, stock-reservation expiry, health
+  probes (`/health/live` and `/health/ready`), rate limiting, Serilog correlation
+  IDs, and Swagger with a Bearer security scheme.
+- **Testing** — unit, architecture, and integration suites. Integration tests
+  run the real host against a throwaway SQL Server database; EF InMemory is never
+  used.
 
 ## Projects
 
@@ -159,8 +200,11 @@ allowed):
 ```text
 Cors__AllowedOrigins__0=https://localhost:5001
 Cors__AllowedOrigins__1=http://localhost:5173
-Cors__AllowedOrigins__2=https://<your-project>.vercel.app
+Cors__AllowedOrigins__2=https://e-commerce-delta-two-53.vercel.app
 ```
+
+The deployed Vercel origin is index `2` above. Add any custom domain as another
+indexed entry.
 
 ## Design notes
 
