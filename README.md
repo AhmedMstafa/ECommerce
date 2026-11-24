@@ -108,11 +108,17 @@ etc.):
 | `GoogleAuth:ClientId` | `GoogleAuth__ClientId` |
 | `EmailSettings:Password` | `EmailSettings__Password` |
 | `ClientApp:BaseUrl` | `ClientApp__BaseUrl` |
+| `Swagger:Enabled` | `Swagger__Enabled` |
 
 Missing `Jwt:SecretKey`, `ConnectionStrings:DefaultConnection`, or
 `Redis:Configuration` produces a clear startup error that names the key but
 never prints a value. Redis connection failures at runtime are logged as
 warnings and degrade to SQL Server; they do not fail product queries.
+
+Swagger UI is enabled in Production by default and served at
+`/swagger/index.html`; the JSON document is at `/swagger/v1/swagger.json`.
+Set `Swagger__Enabled=false` if you need to disable it. The app trusts Railway's
+forwarded proto/prefix headers so the UI works behind HTTPS termination.
 
 ## Design notes
 
@@ -198,6 +204,7 @@ docker run -d --name ecommerce-api --env-file ./.env -p 8080:8080 ecommerce-api:
 | `Stripe__WebhookSecret` | Yes* | Required outside `Testing`/design-time. |
 | `ASPNETCORE_ENVIRONMENT` | Recommended | Dockerfile defaults to `Production`. |
 | `ASPNETCORE_HTTP_PORTS` | Optional | Dockerfile sets `8080`. |
+| `Swagger__Enabled` | Optional | Production defaults to `true`; set `false` to disable public Swagger. |
 
 \*Stripe keys are validated by application startup outside Testing/design-time.
 

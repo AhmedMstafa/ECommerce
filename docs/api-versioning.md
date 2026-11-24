@@ -13,7 +13,8 @@ Only `v1.0` is currently supported. The version is exposed as `v1` in Swagger gr
 - The default version is `1.0`.
 - `api-supported-versions` is returned in responses because `ReportApiVersions` is enabled.
 - Requests without a version segment do **not** fall back to v1 because the route template requires the segment. Clients must use `/api/v1/...`.
-- Swagger documents are available in Development at `/swagger/index.html`; `Swagger:Enabled=true` can enable them in another environment when needed.
+- Swagger UI is available at `/swagger/index.html` in Development and Production. Production enables it through `appsettings.Production.json`; set `Swagger__Enabled=false` to disable it.
+- The UI uses the relative document URL `v1/swagger.json`, so it works behind Railway's HTTPS reverse proxy and a forwarded path base.
 
 ## Adding a new version
 

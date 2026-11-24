@@ -9,6 +9,7 @@ using ECommerce.Infrastructure.Seeding;
 using ECommerce.UseCases;
 using Hangfire;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 using Serilog.Events;
@@ -53,6 +54,22 @@ builder.Services.AddApplication();
 
 var app = builder.Build();
 
+// Railway terminates TLS at its edge and forwards requests to the container
+// over HTTP. Trust the forwarded scheme/prefix so HTTPS redirection, generated
+// links and Swagger's relative document URL work behind that proxy.
+var forwardedHeadersOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedPrefix,
+    ForwardLimit = 1,
+    RequireHeaderSymmetry = false
+};
+
+// Railway's proxy addresses are platform-managed, so the static known
+// proxy/network lists are cleared. The app is only exposed through the edge.
+forwardedHeadersOptions.KnownIPNetworks.Clear();
+forwardedHeadersOptions.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedHeadersOptions);
+
 app.UseSerilogRequestLogging(options =>
 {
     options.GetLevel = (httpContext, _, exception) =>
@@ -93,12 +110,14 @@ if (swaggerEnabled)
     app.UseSwagger();
     app.UseSwaggerUI(options =>
     {
+        options.RoutePrefix = "swagger";
         options.ConfigObject.PersistAuthorization = true;
 
         foreach (var description in apiVersionDescriptions.Reverse())
         {
+            // Relative to the UI route so a reverse-proxy PathBase is preserved.
             options.SwaggerEndpoint(
-                $"/swagger/{description.GroupName}/swagger.json",
+                $"{description.GroupName}/swagger.json",
                 $"ECommerce API {description.GroupName.ToUpperInvariant()}");
         }
     });
