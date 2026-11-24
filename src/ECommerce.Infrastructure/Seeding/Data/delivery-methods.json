@@ -1,0 +1,20 @@
+[
+  {
+    "Id": "7a1c0001-0000-4000-8000-000000000001",
+    "Name": "Standard",
+    "Description": "3-5 business days",
+    "Price": 10.00
+  },
+  {
+    "Id": "7a1c0002-0000-4000-8000-000000000002",
+    "Name": "Express",
+    "Description": "1-2 business days",
+    "Price": 20.00
+  },
+  {
+    "Id": "7a1c0003-0000-4000-8000-000000000003",
+    "Name": "Overnight",
+    "Description": "Next business day",
+    "Price": 35.00
+  }
+]

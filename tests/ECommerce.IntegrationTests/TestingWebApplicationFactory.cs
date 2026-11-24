@@ -23,9 +23,15 @@ namespace ECommerce.IntegrationTests;
 public sealed class TestingWebApplicationFactory : WebApplicationFactory<Program>
 {
     private readonly IReadOnlyDictionary<string, string?> _originalEnvironment;
+    private readonly string _environment;
 
-    public TestingWebApplicationFactory(string connectionString)
+    public TestingWebApplicationFactory(
+        string connectionString,
+        string environment = "Testing",
+        Action<IDictionary<string, string?>>? configureSettings = null)
     {
+        _environment = environment;
+
         var settings = new Dictionary<string, string?>
         {
             ["ConnectionStrings__DefaultConnection"] = connectionString,
@@ -40,6 +46,8 @@ public sealed class TestingWebApplicationFactory : WebApplicationFactory<Program
             ["Redis__Configuration"] = "localhost:6379,abortConnect=false",
             ["Redis__InstanceName"] = "ECommerceTest:"
         };
+
+        configureSettings?.Invoke(settings);
 
         // Program.cs captures several settings into locals while registering
         // services, before WebApplicationFactory's ConfigureAppConfiguration
@@ -57,7 +65,7 @@ public sealed class TestingWebApplicationFactory : WebApplicationFactory<Program
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseEnvironment("Testing");
+        builder.UseEnvironment(_environment);
 
         builder.ConfigureServices(services =>
         {
@@ -113,7 +121,8 @@ public sealed class TestingWebApplicationFactory : WebApplicationFactory<Program
 
         if (implementationName is not null)
         {
-            return implementationName.StartsWith("Hangfire.", StringComparison.Ordinal);
+            return implementationName.StartsWith("Hangfire.", StringComparison.Ordinal) ||
+                   implementationName.StartsWith("ECommerce.Infrastructure.BackgroundJobs.", StringComparison.Ordinal);
         }
 
         return descriptor.ImplementationFactory?.Method.ReturnType.FullName?

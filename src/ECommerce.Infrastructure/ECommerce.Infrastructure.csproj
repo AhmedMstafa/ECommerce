@@ -7,18 +7,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Remove="Seeding\Data\brands.json" />
-    <None Remove="Seeding\Data\types.json" />
+    <None Remove="Seeding\Data\*.json" />
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Seeding\Data\types.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </EmbeddedResource>
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Include="Seeding\Data\brands.json">
+    <EmbeddedResource Include="Seeding\Data\*.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </EmbeddedResource>
   </ItemGroup>

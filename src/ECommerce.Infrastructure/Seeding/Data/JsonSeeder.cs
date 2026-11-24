@@ -11,24 +11,39 @@ namespace ECommerce.Infrastructure.Seeding.Data
             PropertyNameCaseInsensitive = true,
         };
 
-        public static async Task SeedIfEmpty<TEntity,TModel>(DbSet<TEntity> dbset, string fileName, Func<TModel,TEntity> map, CancellationToken ct)where TEntity : BaseEntity
+        public static async Task<IReadOnlyList<TModel>> ReadAsync<TModel>(string fileName, CancellationToken ct)
         {
-            if (await dbset.AnyAsync(ct))
-                return;
-
             var filePath = Path.Combine(AppContext.BaseDirectory, "Seeding", "Data", fileName);
 
-            if (!File.Exists(filePath)) return;
+            if (!File.Exists(filePath))
+            {
+                return [];
+            }
 
             await using var stream = File.OpenRead(filePath);
-
             var models = await JsonSerializer.DeserializeAsync<List<TModel>>(stream, _options, ct);
+            return models ?? [];
+        }
 
-            if (models is null || models.Count == 0) return;
+        public static async Task SeedIfEmpty<TEntity, TModel>(
+            DbSet<TEntity> dbset,
+            string fileName,
+            Func<TModel, TEntity> map,
+            CancellationToken ct) where TEntity : BaseEntity
+        {
+            if (await dbset.AnyAsync(ct))
+            {
+                return;
+            }
 
-            var entites = models.Select(map);
+            var models = await ReadAsync<TModel>(fileName, ct);
 
-            await dbset.AddRangeAsync(models.Select(map) , ct);
+            if (models.Count == 0)
+            {
+                return;
+            }
+
+            await dbset.AddRangeAsync(models.Select(map), ct);
         }
     }
 }

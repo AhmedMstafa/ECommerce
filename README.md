@@ -52,6 +52,9 @@ Then edit `.env`:
   password-reset emails. `ClientApp__BaseUrl` is used to build the reset link.
 - `SeedAdmin__Email` / `SeedAdmin__Password` — optional; applied only when
   `ASPNETCORE_ENVIRONMENT=Development`.
+- `SeedDemoUsers__Enabled` / `SeedDemoUsers__Password` — optional; Development-only
+  demo customers and addresses. All demo users share the configured password.
+  Without a password, existing users still get their demo addresses.
 - `ECOMMERCE_TEST_SQL_CONNECTION` — optional; SQL Server `master` connection for
   integration tests.
 
@@ -63,6 +66,26 @@ The `.env` file is found by walking up from the current directory, so it works
 when running from the repository root, from `ECommerce.API`, and from test
 output folders. A missing `.env` file is not an error; injection via environment
 variables still works.
+
+## Development seed data
+
+`DatabaseSeeder` runs only in `Development`, after `MigrateAsync()`. It is
+idempotent: existing rows are never overwritten.
+
+| Seeder | Data | Source |
+| --- | --- | --- |
+| `IdentitySeeder` | `Admin` role and optional admin account | `SeedAdmin__*` |
+| `ProductTypeSeeder` | 5 types (Electronics, Apparel, Home & Kitchen, Books, Sports & Outdoors) | `src/ECommerce.Infrastructure/Seeding/Data/types.json` |
+| `ProductBrandSeeder` | 5 brands (Nike, Adidas, Apple, Samsung, Sony) | `.../brands.json` |
+| `DeliveryMethodSeeder` | Standard / Express / Overnight | `.../delivery-methods.json` |
+| `ProductSeeder` | 11 demo products with stock | `.../products.json` |
+| `DemoUserDataSeeder` | Two demo customers and three addresses | `.../demo-users.json` + `SeedDemoUsers__Password` |
+
+Products resolve brands and types by name, so they also work when those tables
+already contain operator-created rows. Demo logins are `demo.customer@example.com`
+and `demo.shopper@example.com`; both use `SeedDemoUsers__Password`. Set
+`SeedDemoUsers__Enabled=false` to skip demo users and addresses. Production is
+never seeded automatically.
 
 ## Build and test
 
