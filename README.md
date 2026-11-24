@@ -52,6 +52,9 @@ Then edit `.env`:
   password-reset emails. `ClientApp__BaseUrl` is used to build the reset link.
 - `SeedAdmin__Email` / `SeedAdmin__Password` — optional; applied only when
   `ASPNETCORE_ENVIRONMENT=Development`.
+- `SeedDemoUsers__Enabled` / `SeedDemoUsers__Password` — optional; Development-only
+  demo customers and addresses. All demo users share the configured password.
+  Without a password, existing users still get their demo addresses.
 - `ECOMMERCE_TEST_SQL_CONNECTION` — optional; SQL Server `master` connection for
   integration tests.
 
@@ -63,6 +66,26 @@ The `.env` file is found by walking up from the current directory, so it works
 when running from the repository root, from `ECommerce.API`, and from test
 output folders. A missing `.env` file is not an error; injection via environment
 variables still works.
+
+## Development seed data
+
+`DatabaseSeeder` runs only in `Development`, after `MigrateAsync()`. It is
+idempotent: existing rows are never overwritten.
+
+| Seeder | Data | Source |
+| --- | --- | --- |
+| `IdentitySeeder` | `Admin` role and optional admin account | `SeedAdmin__*` |
+| `ProductTypeSeeder` | 5 types (Electronics, Apparel, Home & Kitchen, Books, Sports & Outdoors) | `src/ECommerce.Infrastructure/Seeding/Data/types.json` |
+| `ProductBrandSeeder` | 5 brands (Nike, Adidas, Apple, Samsung, Sony) | `.../brands.json` |
+| `DeliveryMethodSeeder` | Standard / Express / Overnight | `.../delivery-methods.json` |
+| `ProductSeeder` | 11 demo products with stock | `.../products.json` |
+| `DemoUserDataSeeder` | Two demo customers and three addresses | `.../demo-users.json` + `SeedDemoUsers__Password` |
+
+Products resolve brands and types by name, so they also work when those tables
+already contain operator-created rows. Demo logins are `demo.customer@example.com`
+and `demo.shopper@example.com`; both use `SeedDemoUsers__Password`. Set
+`SeedDemoUsers__Enabled=false` to skip demo users and addresses. Production is
+never seeded automatically.
 
 ## Build and test
 
@@ -109,6 +132,7 @@ etc.):
 | `EmailSettings:Password` | `EmailSettings__Password` |
 | `ClientApp:BaseUrl` | `ClientApp__BaseUrl` |
 | `Swagger:Enabled` | `Swagger__Enabled` |
+| `Cors:AllowedOrigins:0..n` | `Cors__AllowedOrigins__0..n` |
 
 Missing `Jwt:SecretKey`, `ConnectionStrings:DefaultConnection`, or
 `Redis:Configuration` produces a clear startup error that names the key but
@@ -119,6 +143,24 @@ Swagger UI is enabled in Production by default and served at
 `/swagger/index.html`; the JSON document is at `/swagger/v1/swagger.json`.
 Set `Swagger__Enabled=false` if you need to disable it. The app trusts Railway's
 forwarded proto/prefix headers so the UI works behind HTTPS termination.
+
+## Frontend checkout (Vercel)
+
+A standalone React + Vite + TypeScript checkout lives in [`frontend/`](frontend/README.md).
+It uses Stripe.js/Elements with the PaymentIntent `clientSecret` created by this
+API; it never creates a PaymentIntent or Checkout Session and never calls the
+webhook endpoint. See `frontend/README.md` for env vars, the demo login, the
+`4242 4242 4242 4242` test card, and Vercel deployment notes.
+
+CORS needs no code change: add each browser origin to the API environment as
+indexed variables (the policy uses `AllowCredentials`, so wildcards are not
+allowed):
+
+```text
+Cors__AllowedOrigins__0=https://localhost:5001
+Cors__AllowedOrigins__1=http://localhost:5173
+Cors__AllowedOrigins__2=https://<your-project>.vercel.app
+```
 
 ## Design notes
 

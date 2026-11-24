@@ -1,0 +1,49 @@
+[
+  {
+    "Email": "demo.customer@example.com",
+    "FirstName": "Demo",
+    "LastName": "Customer",
+    "Addresses": [
+      {
+        "Id": "c1000001-0000-4000-8000-000000000001",
+        "FirstName": "Demo",
+        "LastName": "Customer",
+        "Street": "12 Talaat Harb Street",
+        "City": "Cairo",
+        "State": "Cairo",
+        "ZipCode": "11111",
+        "Country": "Egypt",
+        "IsDefault": true
+      },
+      {
+        "Id": "c1000002-0000-4000-8000-000000000002",
+        "FirstName": "Demo",
+        "LastName": "Customer",
+        "Street": "5 Nile Street",
+        "City": "Giza",
+        "State": "Giza",
+        "ZipCode": "12511",
+        "Country": "Egypt",
+        "IsDefault": false
+      }
+    ]
+  },
+  {
+    "Email": "demo.shopper@example.com",
+    "FirstName": "Demo",
+    "LastName": "Shopper",
+    "Addresses": [
+      {
+        "Id": "c1000003-0000-4000-8000-000000000003",
+        "FirstName": "Demo",
+        "LastName": "Shopper",
+        "Street": "44 Sahara Street",
+        "City": "Alexandria",
+        "State": "Alexandria",
+        "ZipCode": "21511",
+        "Country": "Egypt",
+        "IsDefault": true
+      }
+    ]
+  }
+]

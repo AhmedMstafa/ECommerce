@@ -1,0 +1,112 @@
+[
+  {
+    "Id": "b1000001-0000-4000-8000-000000000001",
+    "Name": "Nike Running Tee",
+    "Description": "Lightweight breathable running shirt for daily training.",
+    "PictureUrl": "https://placehold.co/600x400/png?text=Nike+Running+Tee",
+    "Price": 35.00,
+    "StockQuantity": 80,
+    "Brand": "Nike",
+    "Type": "Apparel"
+  },
+  {
+    "Id": "b1000002-0000-4000-8000-000000000002",
+    "Name": "Adidas Training Shoes",
+    "Description": "Versatile training shoes with cushioned support.",
+    "PictureUrl": "https://placehold.co/600x400/png?text=Adidas+Training+Shoes",
+    "Price": 89.00,
+    "StockQuantity": 40,
+    "Brand": "Adidas",
+    "Type": "Apparel"
+  },
+  {
+    "Id": "b1000003-0000-4000-8000-000000000003",
+    "Name": "Nike Yoga Mat",
+    "Description": "Non-slip exercise mat for yoga and home workouts.",
+    "PictureUrl": "https://placehold.co/600x400/png?text=Nike+Yoga+Mat",
+    "Price": 45.00,
+    "StockQuantity": 60,
+    "Brand": "Nike",
+    "Type": "Sports & Outdoors"
+  },
+  {
+    "Id": "b1000004-0000-4000-8000-000000000004",
+    "Name": "Adidas Football",
+    "Description": "All-weather football for training and matches.",
+    "PictureUrl": "https://placehold.co/600x400/png?text=Adidas+Football",
+    "Price": 29.00,
+    "StockQuantity": 100,
+    "Brand": "Adidas",
+    "Type": "Sports & Outdoors"
+  },
+  {
+    "Id": "b1000005-0000-4000-8000-000000000005",
+    "Name": "Apple AirPods Pro",
+    "Description": "Wireless earbuds with active noise cancellation.",
+    "PictureUrl": "https://placehold.co/600x400/png?text=Apple+AirPods+Pro",
+    "Price": 249.00,
+    "StockQuantity": 25,
+    "Brand": "Apple",
+    "Type": "Electronics"
+  },
+  {
+    "Id": "b1000006-0000-4000-8000-000000000006",
+    "Name": "Apple MacBook Air",
+    "Description": "Thin and light laptop for work and study.",
+    "PictureUrl": "https://placehold.co/600x400/png?text=Apple+MacBook+Air",
+    "Price": 999.00,
+    "StockQuantity": 12,
+    "Brand": "Apple",
+    "Type": "Electronics"
+  },
+  {
+    "Id": "b1000007-0000-4000-8000-000000000007",
+    "Name": "Samsung Galaxy S24",
+    "Description": "Compact flagship smartphone with a bright display.",
+    "PictureUrl": "https://placehold.co/600x400/png?text=Samsung+Galaxy+S24",
+    "Price": 799.00,
+    "StockQuantity": 18,
+    "Brand": "Samsung",
+    "Type": "Electronics"
+  },
+  {
+    "Id": "b1000008-0000-4000-8000-000000000008",
+    "Name": "Samsung Microwave Oven",
+    "Description": "Countertop microwave with multiple power levels.",
+    "PictureUrl": "https://placehold.co/600x400/png?text=Samsung+Microwave",
+    "Price": 199.00,
+    "StockQuantity": 30,
+    "Brand": "Samsung",
+    "Type": "Home & Kitchen"
+  },
+  {
+    "Id": "b1000009-0000-4000-8000-000000000009",
+    "Name": "Sony WH-1000XM5",
+    "Description": "Over-ear headphones with industry-leading noise canceling.",
+    "PictureUrl": "https://placehold.co/600x400/png?text=Sony+WH1000XM5",
+    "Price": 349.00,
+    "StockQuantity": 22,
+    "Brand": "Sony",
+    "Type": "Electronics"
+  },
+  {
+    "Id": "b100000a-0000-4000-8000-00000000000a",
+    "Name": "Sony Coffee Machine",
+    "Description": "Automatic drip coffee maker with a thermal carafe.",
+    "PictureUrl": "https://placehold.co/600x400/png?text=Sony+Coffee+Machine",
+    "Price": 129.00,
+    "StockQuantity": 35,
+    "Brand": "Sony",
+    "Type": "Home & Kitchen"
+  },
+  {
+    "Id": "b100000b-0000-4000-8000-00000000000b",
+    "Name": "Apple Design Handbook",
+    "Description": "A practical guide to interface design and product craft.",
+    "PictureUrl": "https://placehold.co/600x400/png?text=Apple+Design+Handbook",
+    "Price": 39.00,
+    "StockQuantity": 50,
+    "Brand": "Apple",
+    "Type": "Books"
+  }
+]
