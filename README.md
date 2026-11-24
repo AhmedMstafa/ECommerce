@@ -140,4 +140,92 @@ Selected operational decisions:
   existing users are not forced to change passwords.
 - Password reset emails are HTML templates with encoded dynamic values and are
   committed to the outbox; SMTP failures remain retryable.
-- Runtime health probes are `/health/live` and `/health/ready`.
+- Runtime health probes are `/health/live` and `/health/ready`. `/health/live`
+  intentionally ignores external dependencies. `/health/ready` includes SQL
+  Server and Hangfire recurring-job registration; if Hangfire storage is
+  temporarily unavailable at startup, the API still starts and serves liveness
+  while a hosted service retries recurring-job registration with exponential
+  backoff.
+
+## Docker (API only)
+
+The Docker setup containerizes **only** the ASP.NET Core API (`src/ECommerce.API`). SQL Server, Redis, and Hangfire remain external dependencies/services as configured by the application.
+
+### Prerequisites
+
+- Docker Desktop / Docker Engine with Linux container support.
+- Reachable external SQL Server and Redis instances.
+- Required application configuration values (no secrets baked into the image).
+
+### Build
+
+Run from the repository root (next to `ECommerce.slnx`):
+
+```powershell
+docker build -t ecommerce-api:local -f Dockerfile .
+```
+
+### Run
+
+The container listens on HTTP port `8080`. Provide required configuration through environment variables (or an env-file kept outside the image).
+
+```powershell
+docker run -d --name ecommerce-api `
+  -p 8080:8080 `
+  -e ASPNETCORE_ENVIRONMENT=Production `
+  -e "ConnectionStrings__DefaultConnection=<sql-connection-string>" `
+  -e "Jwt__SecretKey=<long-random-secret>" `
+  -e "Redis__Configuration=<redis-connection-string>" `
+  -e "Stripe__SecretKey=<stripe-secret-key>" `
+  -e "Stripe__WebhookSecret=<stripe-webhook-secret>" `
+  ecommerce-api:local
+```
+
+Optional env-file approach (do **not** copy `.env` into the image):
+
+```powershell
+docker run -d --name ecommerce-api --env-file ./.env -p 8080:8080 ecommerce-api:local
+```
+
+### Required / important environment variables
+
+| Variable | Required | Notes |
+|---|---:|---|
+| `ConnectionStrings__DefaultConnection` | Yes | SQL Server connection string. Startup validation fails if missing. |
+| `Jwt__SecretKey` | Yes | JWT signing key; startup validation fails if missing. |
+| `Redis__Configuration` | Yes | Redis/Upstash connection string; startup validation fails if missing/placeholder. |
+| `Stripe__SecretKey` | Yes* | Required outside `Testing`/design-time. |
+| `Stripe__WebhookSecret` | Yes* | Required outside `Testing`/design-time. |
+| `ASPNETCORE_ENVIRONMENT` | Recommended | Dockerfile defaults to `Production`. |
+| `ASPNETCORE_HTTP_PORTS` | Optional | Dockerfile sets `8080`. |
+
+\*Stripe keys are validated by application startup outside Testing/design-time.
+
+### External SQL Server / Redis from a Linux container
+
+Inside a container, `localhost` refers to the container itself, not your host machine. If SQL Server or Redis run on the Docker host (Windows), configure the container to reach the host service:
+
+- **Docker Desktop (Windows/macOS):** `host.docker.internal` is commonly used to reach host-published ports.
+- **Remote/cloud SQL/Redis:** use the actual server hostname/IP and ensure network/firewall access.
+
+Example shape only (replace placeholders; do not commit secrets):
+
+```text
+ConnectionStrings__DefaultConnection=Server=host.docker.internal,1433;Database=ECommerceDb;User Id=<user>;Password=<password>;TrustServerCertificate=True;MultipleActiveResultSets=True
+Redis__Configuration=<redis-host>:6379,abortConnect=false
+```
+
+Verify the real endpoint, port, TLS, and credentials for your environment before use.
+
+### Access, logs, and cleanup
+
+```powershell
+# Liveness probe
+Invoke-WebRequest http://localhost:8080/health/live -UseBasicParsing
+
+# Logs
+docker logs ecommerce-api
+
+# Stop and remove test container
+docker rm -f ecommerce-api
+```

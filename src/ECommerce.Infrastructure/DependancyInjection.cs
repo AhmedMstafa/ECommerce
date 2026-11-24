@@ -241,6 +241,16 @@ public static class DependancyInjection
 
             services.AddScoped<OutboxProcessorJob>();
             services.AddScoped<ReservationExpirationJob>();
+            services.AddSingleton<IRecurringJobRegistrationState, RecurringJobRegistrationState>();
+
+            if (!isTesting)
+            {
+                services.AddHostedService<RecurringJobRegistrationService>();
+                services.AddHealthChecks()
+                    .AddCheck<RecurringJobRegistrationHealthCheck>(
+                        "hangfire-recurring-jobs",
+                        tags: ["ready", "hangfire"]);
+            }
         }
 
         // 8. Repositories & Seeding

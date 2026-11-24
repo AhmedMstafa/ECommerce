@@ -4,7 +4,6 @@ using ECommerce.API;
 using ECommerce.API.Hangfire;
 using ECommerce.API.Health;
 using ECommerce.Infrastructure;
-using ECommerce.Infrastructure.BackgroundJobs;
 using ECommerce.Infrastructure.Persistence;
 using ECommerce.Infrastructure.Seeding;
 using ECommerce.UseCases;
@@ -146,16 +145,6 @@ if (!app.Environment.IsEnvironment("Testing"))
     {
         Authorization = [new HangfireDashboardAuthorizationFilter()]
     });
-
-    RecurringJob.AddOrUpdate<OutboxProcessorJob>(
-        "process-outbox-messages",
-        job => job.ProcessPendingMessagesAsync(null),
-        "*/15 * * * * *");
-
-    RecurringJob.AddOrUpdate<ReservationExpirationJob>(
-        "expire-stock-reservations",
-        job => job.ExpireReservationsAsync(CancellationToken.None),
-        "* * * * *");
 }
 
 app.MapControllers();
