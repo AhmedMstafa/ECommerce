@@ -35,6 +35,22 @@ public sealed class PlatformIntegrationTests(IntegrationTestFixture fixture)
     }
 
     [Fact]
+    public async Task SwaggerUi_ShouldBeServedWithRelativeDocumentUrl()
+    {
+        var response = await fixture.Client.GetAsync("/swagger/index.html");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var html = await response.Content.ReadAsStringAsync();
+        html.Should().Contain("swagger-ui");
+
+        var configResponse = await fixture.Client.GetAsync("/swagger/index.js");
+        configResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var config = await configResponse.Content.ReadAsStringAsync();
+        config.Should().Contain("v1/swagger.json");
+    }
+
+    [Fact]
     public async Task Swagger_ShouldExposeVersionedDocumentWithBearerScheme()
     {
         var response = await fixture.Client.GetAsync("/swagger/v1/swagger.json");
