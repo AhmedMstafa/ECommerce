@@ -2,6 +2,7 @@ using ECommerce.Domain.Entities;
 using ECommerce.Domain.Enums;
 using ECommerce.Domain.Repositories;
 using ECommerce.Domain.Specifications;
+using ECommerce.Domain.Specifications.Builders;
 using ECommerce.UseCases.Common.Orders;
 using Hangfire;
 using Microsoft.Extensions.Logging;
@@ -99,8 +100,8 @@ public sealed class OrderWithReservationsSpec : BaseSpecification<Order>
     public OrderWithReservationsSpec(Guid orderId)
     {
         AddCriteria(o => o.Id == orderId);
-        AddInclude(o => (object)o.Items);
-        AddInclude(o => (object)o.StockReservations);
+        Query.Include(o => o.Items);
+        Query.Include(o => o.StockReservations);
         EnableTracking();
     }
 }

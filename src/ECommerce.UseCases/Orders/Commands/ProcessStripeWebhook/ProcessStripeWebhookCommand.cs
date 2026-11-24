@@ -3,6 +3,7 @@ using ECommerce.Domain.Entities;
 using ECommerce.Domain.Enums;
 using ECommerce.Domain.Repositories;
 using ECommerce.Domain.Specifications;
+using ECommerce.Domain.Specifications.Builders;
 using ECommerce.UseCases.Common.Orders;
 using ECommerce.UseCases.Common.Payments;
 using ECommerce.UseCases.Orders.Commands.CreateOrder;
@@ -387,8 +388,8 @@ public sealed class OrderByPaymentIntentIdSpec : BaseSpecification<Order>
     public OrderByPaymentIntentIdSpec(string paymentIntentId)
     {
         AddCriteria(x => x.StripePaymentIntentId == paymentIntentId);
-        AddInclude(x => (object)x.Items);
-        AddInclude(x => (object)x.StockReservations);
+        Query.Include(x => x.Items);
+        Query.Include(x => x.StockReservations);
         EnableTracking();
     }
 }

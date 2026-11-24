@@ -3,6 +3,7 @@ using ECommerce.Domain.Entities;
 using ECommerce.Domain.Enums;
 using ECommerce.Domain.Repositories;
 using ECommerce.Domain.Specifications;
+using ECommerce.Domain.Specifications.Builders;
 using ECommerce.UseCases.Common.Orders;
 using ECommerce.UseCases.Common.Payments;
 using ECommerce.UseCases.Orders.Dtos;
@@ -290,8 +291,8 @@ public sealed class OrderByBuyerAndIdempotencyKeySpec : BaseSpecification<Order>
     public OrderByBuyerAndIdempotencyKeySpec(Guid buyerId, string idempotencyKey)
     {
         AddCriteria(x => x.BuyerId == buyerId && x.IdempotencyKey == idempotencyKey);
-        AddInclude(x => (object)x.Items);
-        AddInclude(x => (object)x.StockReservations);
+        Query.Include(x => x.Items);
+        Query.Include(x => x.StockReservations);
     }
 }
 
@@ -300,8 +301,8 @@ public sealed class OrderByIdWithDetailsSpec : BaseSpecification<Order>
     public OrderByIdWithDetailsSpec(Guid orderId)
     {
         AddCriteria(x => x.Id == orderId);
-        AddInclude(x => (object)x.Items);
-        AddInclude(x => (object)x.StockReservations);
+        Query.Include(x => x.Items);
+        Query.Include(x => x.StockReservations);
         EnableTracking();
     }
 }

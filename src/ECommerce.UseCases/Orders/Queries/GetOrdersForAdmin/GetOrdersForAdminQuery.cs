@@ -3,6 +3,7 @@ using ECommerce.Domain.Entities;
 using ECommerce.Domain.Enums;
 using ECommerce.Domain.Repositories;
 using ECommerce.Domain.Specifications;
+using ECommerce.Domain.Specifications.Builders;
 using ECommerce.UseCases.Orders.Commands.CreateOrder;
 using ECommerce.UseCases.Orders.Dtos;
 using MediatR;
@@ -24,8 +25,8 @@ public sealed class AdminOrdersSpec : BaseSpecification<Order>
             AddWhere(x => x.CreatedAtUtc >= fromUtc.Value);
         if (toUtc.HasValue)
             AddWhere(x => x.CreatedAtUtc <= toUtc.Value);
-        AddInclude(x => (object)x.Items);
-        AddInclude(x => (object)x.StockReservations);
+        Query.Include(x => x.Items);
+        Query.Include(x => x.StockReservations);
         AddOrderByDescending(x => x.CreatedAtUtc);
     }
 }

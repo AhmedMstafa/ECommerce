@@ -2,6 +2,7 @@ using ECommerce.Domain.Common;
 using ECommerce.Domain.Entities;
 using ECommerce.Domain.Repositories;
 using ECommerce.Domain.Specifications;
+using ECommerce.Domain.Specifications.Builders;
 using ECommerce.UseCases.Orders.Commands.CreateOrder;
 using ECommerce.UseCases.Orders.Dtos;
 using MediatR;
@@ -15,8 +16,8 @@ public sealed class OrdersByBuyerSpec : BaseSpecification<Order>
     public OrdersByBuyerSpec(Guid buyerId)
     {
         AddCriteria(x => x.BuyerId == buyerId);
-        AddInclude(x => (object)x.Items);
-        AddInclude(x => (object)x.StockReservations);
+        Query.Include(x => x.Items);
+        Query.Include(x => x.StockReservations);
         AddOrderByDescending(x => x.CreatedAtUtc);
     }
 }
