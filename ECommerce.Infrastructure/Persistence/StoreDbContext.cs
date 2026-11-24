@@ -16,6 +16,11 @@ public class StoreDbContext(DbContextOptions<StoreDbContext> options)
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<Address> Addresses => Set<Address>();
+    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+    public DbSet<DeliveryMethod> DeliveryMethods => Set<DeliveryMethod>();
+    public DbSet<StockReservation> StockReservations => Set<StockReservation>();
+    public DbSet<StripeWebhookEvent> StripeWebhookEvents => Set<StripeWebhookEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

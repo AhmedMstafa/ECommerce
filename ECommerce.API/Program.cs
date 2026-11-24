@@ -49,7 +49,7 @@ builder.Host.UseSerilog((context, services, configuration) =>
 });
 
 builder.Services.AddPresentation(builder.Configuration);
-builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.IsDevelopment());
+builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.IsDevelopment(), builder.Environment.IsEnvironment("Testing"));
 builder.Services.AddApplication();
 
 var app = builder.Build();
@@ -78,7 +78,12 @@ app.UseSerilogRequestLogging(options =>
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+if (!app.Environment.IsEnvironment("Testing"))
+{
+    app.UseHttpsRedirection();
+}
 app.UseRouting();
+app.UseCors("FrontendCors");
 app.UseRateLimiter();
 
 var swaggerEnabled = app.Configuration.GetValue<bool>("Swagger:Enabled", app.Environment.IsDevelopment());
@@ -146,6 +151,11 @@ if (!app.Environment.IsEnvironment("Testing"))
         "process-outbox-messages",
         job => job.ProcessPendingMessagesAsync(null),
         "*/15 * * * * *");
+
+    RecurringJob.AddOrUpdate<ReservationExpirationJob>(
+        "expire-stock-reservations",
+        job => job.ExpireReservationsAsync(CancellationToken.None),
+        "* * * * *");
 }
 
 app.MapControllers();

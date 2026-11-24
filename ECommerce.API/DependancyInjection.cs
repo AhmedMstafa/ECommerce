@@ -157,7 +157,23 @@ public static class DependancyInjection
             };
         });
 
-        // 4. Health Checks
+        // 4. CORS
+        var allowedOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+        services.AddCors(options =>
+        {
+            options.AddPolicy("FrontendCors", policy =>
+            {
+                if (allowedOrigins.Length > 0)
+                {
+                    policy.WithOrigins(allowedOrigins)
+                        .AllowAnyHeader()
+                        .AllowAnyMethod()
+                        .AllowCredentials();
+                }
+            });
+        });
+
+        // 5. Health Checks
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         var healthChecks = services.AddHealthChecks();
 

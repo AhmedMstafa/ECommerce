@@ -7,6 +7,8 @@ using ECommerce.Infrastructure.Caching;
 using ECommerce.Infrastructure.Email;
 using ECommerce.Infrastructure.Identity;
 using ECommerce.Infrastructure.Interceptors;
+using ECommerce.Infrastructure.Orders;
+using ECommerce.Infrastructure.Payments;
 using ECommerce.Infrastructure.Persistence;
 using ECommerce.Infrastructure.Repositories;
 using ECommerce.Infrastructure.Seeding;
@@ -14,6 +16,8 @@ using ECommerce.UseCases.Common.Auth;
 using ECommerce.UseCases.Common.Baskets;
 using ECommerce.UseCases.Common.Caching;
 using ECommerce.UseCases.Common.Email;
+using ECommerce.UseCases.Common.Orders;
+using ECommerce.UseCases.Common.Payments;
 using Hangfire;
 using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -32,7 +36,8 @@ public static class DependancyInjection
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services,
         IConfiguration configuration,
-        bool isDevelopment = false)
+        bool isDevelopment = false,
+        bool isTesting = false)
     {
         var connectionString = configuration.GetConnectionString("DefaultConnection");
 
@@ -140,6 +145,21 @@ public static class DependancyInjection
         services.AddTransient<IEmailService, ResendEmailService>();
         services.AddKeyedScoped<IOutboxMessageHandler, EmailOutboxMessageHandler>("Email");
 
+        // 4b. Stripe Payment
+        services.Configure<StripeSettings>(configuration.GetSection(StripeSettings.SectionName));
+        var stripeSettings = configuration.GetSection(StripeSettings.SectionName).Get<StripeSettings>() ?? new();
+        var isDesignTime = string.Equals(System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name, "ef", StringComparison.OrdinalIgnoreCase);
+        if (!isTesting && !isDesignTime)
+        {
+            if (string.IsNullOrWhiteSpace(stripeSettings.SecretKey))
+                throw new InvalidOperationException("Stripe:SecretKey is not configured.");
+            if (string.IsNullOrWhiteSpace(stripeSettings.WebhookSecret))
+                throw new InvalidOperationException("Stripe:WebhookSecret is not configured.");
+        }
+        services.AddScoped<IPaymentService, StripePaymentService>();
+        services.AddScoped<IStockAtomicService, StockAtomicService>();
+        services.AddScoped<IOrderLockingService, OrderLockingService>();
+
         // 5. Caching - Upstash Redis through IDistributedCache.
         var redisSettings = configuration.GetSection(RedisSettings.SectionName).Get<RedisSettings>() ?? new();
         redisSettings.Validate();
@@ -213,6 +233,7 @@ public static class DependancyInjection
             });
 
             services.AddScoped<OutboxProcessorJob>();
+            services.AddScoped<ReservationExpirationJob>();
         }
 
         // 8. Repositories & Seeding

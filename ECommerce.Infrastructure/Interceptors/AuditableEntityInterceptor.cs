@@ -8,6 +8,7 @@ namespace ECommerce.Infrastructure.Interceptors
     /// <summary>
     /// Fills audit columns and turns physical deletes into soft deletes
     /// for every entity that inherits <see cref="BaseEntity"/>.
+    /// Also handles <see cref="AuditedEntity"/> timestamp auditing (no soft delete).
     /// </summary>
     public sealed class AuditableEntityInterceptor : SaveChangesInterceptor
     {
@@ -58,6 +59,21 @@ namespace ECommerce.Infrastructure.Interceptors
                         entry.Property(nameof(BaseEntity.IsDeleted)).CurrentValue = true;
                         entry.Property(nameof(BaseEntity.DeletedAt)).CurrentValue = utcNowOffset;
                         entry.Property(nameof(BaseEntity.UpdatedAt)).CurrentValue = utcNowOffset;
+                        break;
+                }
+            }
+
+            foreach (var entry in context.ChangeTracker.Entries<AuditedEntity>())
+            {
+                switch (entry.State)
+                {
+                    case EntityState.Added:
+                        entry.Property(nameof(AuditedEntity.CreatedAtUtc)).CurrentValue = utcNow;
+                        entry.Property(nameof(AuditedEntity.UpdatedAtUtc)).CurrentValue = utcNowOffset;
+                        break;
+
+                    case EntityState.Modified:
+                        entry.Property(nameof(AuditedEntity.UpdatedAtUtc)).CurrentValue = utcNowOffset;
                         break;
                 }
             }

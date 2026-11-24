@@ -33,7 +33,7 @@ public class RedisRegistrationTests
 
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddInfrastructure(configuration);
+        services.AddInfrastructure(configuration, isTesting: true);
 
         await using var provider = services.BuildServiceProvider();
         await using var scope = provider.CreateAsyncScope();
