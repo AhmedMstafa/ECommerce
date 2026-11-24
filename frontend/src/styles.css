@@ -1,0 +1,186 @@
+:root {
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: #1b1f24;
+  background: #f5f7fa;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.site-header {
+  background: #14213d;
+  color: #fff;
+  padding: 0.75rem 1.5rem;
+}
+
+.site-header nav {
+  display: flex;
+  gap: 1.25rem;
+  align-items: center;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.site-header a,
+.link-button {
+  color: #fff;
+  background: none;
+  border: 0;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
+main {
+  max-width: 960px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+.card,
+.panel {
+  background: #fff;
+  border: 1px solid #dce1e7;
+  border-radius: 10px;
+  padding: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.field.wide {
+  grid-column: 1 / -1;
+}
+
+input[type='text'],
+input[type='email'],
+input[type='password'],
+input:not([type]) {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #aab4c0;
+  border-radius: 6px;
+  font: inherit;
+}
+
+fieldset {
+  border: 1px solid #dce1e7;
+  border-radius: 8px;
+  margin: 0;
+  padding: 1rem;
+}
+
+legend {
+  font-weight: 600;
+  padding: 0 0.35rem;
+}
+
+.radio-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  margin: 0.4rem 0;
+}
+
+.radio-row input {
+  width: auto;
+}
+
+button {
+  background: #0b6bcb;
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 0.6rem 1rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: #e7ecf2;
+  color: #14213d;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.status {
+  padding: 0.75rem 1rem;
+  border-left: 4px solid #0b6bcb;
+  background: #eef5ff;
+}
+
+.status[data-phase='paid'] {
+  border-color: #1a7f37;
+  background: #eaf7ee;
+}
+
+.status[data-phase='failed'],
+.status[data-phase='cancelled'] {
+  border-color: #b42318;
+  background: #fdecea;
+}
+
+.error {
+  color: #b42318;
+  font-weight: 600;
+}
+
+.success {
+  color: #1a7f37;
+  font-weight: 600;
+}
+
+.hint {
+  color: #57606a;
+  font-size: 0.92rem;
+}
+
+.product-list {
+  list-style: none;
+  padding: 0;
+}
+
+.product-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #eef1f4;
+}
+
+:focus-visible {
+  outline: 3px solid #f4a261;
+  outline-offset: 2px;
+}

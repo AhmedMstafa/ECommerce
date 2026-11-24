@@ -132,6 +132,7 @@ etc.):
 | `EmailSettings:Password` | `EmailSettings__Password` |
 | `ClientApp:BaseUrl` | `ClientApp__BaseUrl` |
 | `Swagger:Enabled` | `Swagger__Enabled` |
+| `Cors:AllowedOrigins:0..n` | `Cors__AllowedOrigins__0..n` |
 
 Missing `Jwt:SecretKey`, `ConnectionStrings:DefaultConnection`, or
 `Redis:Configuration` produces a clear startup error that names the key but
@@ -142,6 +143,24 @@ Swagger UI is enabled in Production by default and served at
 `/swagger/index.html`; the JSON document is at `/swagger/v1/swagger.json`.
 Set `Swagger__Enabled=false` if you need to disable it. The app trusts Railway's
 forwarded proto/prefix headers so the UI works behind HTTPS termination.
+
+## Frontend checkout (Vercel)
+
+A standalone React + Vite + TypeScript checkout lives in [`frontend/`](frontend/README.md).
+It uses Stripe.js/Elements with the PaymentIntent `clientSecret` created by this
+API; it never creates a PaymentIntent or Checkout Session and never calls the
+webhook endpoint. See `frontend/README.md` for env vars, the demo login, the
+`4242 4242 4242 4242` test card, and Vercel deployment notes.
+
+CORS needs no code change: add each browser origin to the API environment as
+indexed variables (the policy uses `AllowCredentials`, so wildcards are not
+allowed):
+
+```text
+Cors__AllowedOrigins__0=https://localhost:5001
+Cors__AllowedOrigins__1=http://localhost:5173
+Cors__AllowedOrigins__2=https://<your-project>.vercel.app
+```
 
 ## Design notes
 
